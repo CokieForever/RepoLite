@@ -1,0 +1,10 @@
+/.idea
+.pytest_cache
+*.iml
+__pycache__
+/repolite/tests/res/gerrit
+/dist
+/RepoLite.egg-info
+/build
+/repolite/tests/repo
+/MANIFEST
