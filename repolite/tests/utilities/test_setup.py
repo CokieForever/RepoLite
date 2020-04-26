@@ -39,6 +39,7 @@ from configparser import ConfigParser
 from urllib.parse import urlparse
 
 import requests
+from requests import RequestException
 
 
 class GerritClient:
@@ -122,7 +123,7 @@ class Setup:
                 requests.get("http://localhost:8080/", timeout=1)
                 print("Gerrit is running")
                 break
-            except:
+            except RequestException:
                 if time.time() - iStartTime >= iTimeout:
                     raise
 

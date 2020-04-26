@@ -49,7 +49,7 @@ class TestRepo:
     def setup_class(cls):
         try:
             cls.oTestSetup.setup()
-        except:
+        except:  # noqa: E723
             cls.teardown_class()
             raise
 
@@ -389,4 +389,3 @@ class TestRepo:
         for sProjectFolder in self.lProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "Modified!"
-
