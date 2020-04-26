@@ -36,7 +36,7 @@ from collections import Counter
 
 import requests
 
-from repolite.tests.utilities.test_setup import Setup, removeFolder, withRetry, getExecutablePath
+from repolite.tests.utilities.test_setup import Setup, removeFolder, withRetry, getExecutablePath, configureGit
 
 INITIAL_COMMIT_MSG = "Initial empty repository"
 
@@ -59,6 +59,7 @@ class TestRepo:
 
     def setup_method(self, _):
         self.sRepoFolder = os.path.join(os.path.abspath(os.path.dirname(__file__)), "repo")
+        self.cleanRepoFolder()
         self.runRepo(["sync"])
         self.lProjectFolders = [os.path.join(self.sRepoFolder, sUrl.split("/")[-1])
                                 for sUrl in self.oTestSetup.lProjectUrls]
@@ -70,13 +71,13 @@ class TestRepo:
             if sScpExe:
                 sGetMsgHookCommand = sGetMsgHookCommand.replace("scp", '"%s"' % sScpExe)
         for sProjectFolder in self.lProjectFolders:
+            configureGit(sProjectFolder)
             sProjectName = os.path.basename(sProjectFolder)
             subprocess.run(shlex.split(sGetMsgHookCommand.replace("${project-base-name}", sProjectName)),
                            check=True, cwd=os.path.dirname(sProjectFolder))
 
     def teardown_method(self, _):
         self.oTestSetup.resetProjects()
-        self.cleanRepoFolder()
 
     def cleanRepoFolder(self):
         withRetry(lambda: removeFolder(self.sRepoFolder))
@@ -93,8 +94,10 @@ class TestRepo:
             kwargs["capture_output"] = True
         if kwargs["capture_output"] and "encoding" not in kwargs:
             kwargs["encoding"] = "latin-1"
+        dEnv = os.environ
+        dEnv["PYTHONPATH"] = (";" if os.name == "nt" else ":").join(sys.path)
         sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "repo.py"))
-        return subprocess.run([sys.executable, sRepoScript] + lArgs, **kwargs)
+        return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
     def runGit(self, lArgs, sCwd, **kwargs):
         kwargs["cwd"] = sCwd

@@ -87,7 +87,6 @@ class Setup:
     def setup(self):
         self.installGerrit()
         self.launchGerrit()
-        self.waitForGerrit()
         self.configureGerrit()
         self.configureSsh()
 
@@ -110,10 +109,12 @@ class Setup:
         oConfig["auth"]["type"] = "DEVELOPMENT_BECOME_ANY_ACCOUNT"
         self.writeGerritConfig(oConfig)
 
-    def launchGerrit(self):
+    def launchGerrit(self, bWait=True):
         print("Launching gerrit")
         self.oGerritProcess = subprocess.Popen(["java", "-jar", os.path.join("bin", "gerrit.war"),
                                                 "daemon", "--console-log"], cwd=self.sGerritInstallationFolder)
+        if bWait:
+            self.waitForGerrit()
 
     def waitForGerrit(self, iTimeout=30):
         print("Waiting for gerrit")
@@ -179,16 +180,19 @@ class Setup:
     def restoreSsh(self):
         print("Restoring original host SSH config")
         sHostsFile = os.path.expanduser(os.path.join("~", ".ssh", "known_hosts"))
-        os.remove(sHostsFile)
         sBackupHostsFile = sHostsFile + ".repo.backup"
         if os.path.isfile(sBackupHostsFile):
+            if os.path.isfile(sHostsFile):
+                os.remove(sHostsFile)
             os.rename(sBackupHostsFile, sHostsFile)
 
     def stopGerrit(self):
         print("Stopping gerrit")
         if self.oGerritProcess is not None:
-            os.kill(self.oGerritProcess.pid, signal.CTRL_C_EVENT)
-            # oGerritProcess.send_signal(signal.SIGINT)
+            if os.name == "nt":
+                os.kill(self.oGerritProcess.pid, signal.CTRL_C_EVENT)
+            else:
+                self.oGerritProcess.send_signal(signal.SIGINT)
             try:
                 self.oGerritProcess.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -196,7 +200,8 @@ class Setup:
                 os.kill(self.oGerritProcess.pid, signal.SIGTERM)
             except KeyboardInterrupt:
                 pass  # Expected
-            self.oGerritProcess = None
+            finally:
+                self.oGerritProcess = None
 
     def readGerritConfig(self):
         oConfig = ConfigParser(dict_type=ConcatOrderedDict, strict=False)
@@ -250,6 +255,13 @@ def getExecutablePath(sExeName):
         for s in [sPath, sPath.replace(sSystem32, sSystemNative)]:
             if os.path.isfile(s):
                 return s
+
+
+def configureGit(sGitFolder):
+    dConfigs = {"user.name": __author__, "user.email": __email__}
+    for sConfigKey, sConfigValue in dConfigs.items():
+        subprocess.run(["git", "config", "--local", sConfigKey, sConfigValue], capture_output=True,
+                       encoding="utf-8", check=True, cwd=sGitFolder).stdout.strip()
 
 
 class ConcatOrderedDict(OrderedDict):
