@@ -16,9 +16,11 @@ easier, especially if you are on Windows and cannot run the Repo tool.
 While some commands such as `repo sync` or `repo download` are available in a lightened form, many other ones are not,
 and a few new ones are introduced such as `repo switch` or `repo push`.
 
-## Usage
+## Installation
 
-First run: `python setup.py install`. This will install the tool and put it in your PATH.
+Go to the root folder and run: `pip install .`. This will install the tool and put it in your PATH.
+
+## Usage
 
 In order to use the tool, you will need to put a simple `manifest.txt` file in a folder (preferably empty), containing
 a simple list of the Gerrit repositories you want to clone:
@@ -86,6 +88,10 @@ T2: A --- B' --- C
 
 Which is probably what you expected. Note however that if you had also added changes on `T2`, they will be lost in this
 case.
+
+## Uninstallation
+
+Simply run `pip uninstall repolite` to uninstall the tool.
 
 ## Development status
 

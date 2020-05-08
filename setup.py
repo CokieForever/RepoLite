@@ -36,6 +36,11 @@ setup(
     author=__author__,
     author_email=__email__,
     packages=find_packages(exclude=["*.tests", "*.tests.*"]),
-    scripts=["repolite/scripts/gerrit.py", "repolite/scripts/repo.py"],
+    entry_points={
+        "console_scripts": [
+            "repo = repolite.main_repo:main",
+            "gerrit = repolite.main_gerrit:main",
+        ],
+    },
     python_requires='>=3.7'
 )

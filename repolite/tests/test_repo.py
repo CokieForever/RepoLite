@@ -96,7 +96,7 @@ class TestRepo:
             kwargs["encoding"] = "latin-1"
         dEnv = os.environ
         dEnv["PYTHONPATH"] = (";" if os.name == "nt" else ":").join(sys.path)
-        sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "repo.py"))
+        sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main_repo.py"))
         return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
     def runGit(self, lArgs, sCwd, **kwargs):
