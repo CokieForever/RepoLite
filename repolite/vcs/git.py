@@ -44,6 +44,21 @@ def getCurrentBranch():
                           stdout=subprocess.PIPE, encoding="utf-8", check=True).stdout.strip()
 
 
+def getLastCommitMsg():
+    return subprocess.run(["git", "log", "-1", "--format=full"], stdout=subprocess.PIPE,
+                          encoding="utf-8", check=True).stdout.strip()
+
+
+def getAllBranches():
+    return [s[2:] for s in subprocess.run(["git", "branch"], stdout=subprocess.PIPE,
+                                          encoding="utf-8", check=True).stdout.splitlines()]
+
+
+def getGitMessages():
+    return subprocess.run(["git", "log", "--format=format:%s"], stdout=subprocess.PIPE,
+                          encoding="utf-8", check=True).stdout.splitlines()
+
+
 def cherryPick(sCommitId, xOnAbort=None):
     def onError():
         while True:

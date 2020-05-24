@@ -33,12 +33,11 @@ import os
 import shlex
 import subprocess
 from collections import OrderedDict, Counter
-from contextlib import contextmanager
 from urllib.parse import urlparse, unquote
 
-from repolite.vcs import gerrit, git
 from repolite.util.log import error, warning, highlight, fatalError, success, fullSuccess, oTerminal
-from repolite.util.misc import strOrDefault, FatalError
+from repolite.util.misc import strOrDefault, FatalError, changeWorkingDir
+from repolite.vcs import gerrit, git
 
 
 def KeepInvalid(xFunction):
@@ -49,16 +48,6 @@ def KeepInvalid(xFunction):
 def ForAll(xFunction):
     xFunction.bForAll = True
     return xFunction
-
-
-@contextmanager
-def changeWorkingDir(sNewWorkingDir):
-    sOldWorkingDir = os.path.abspath(os.getcwd())
-    os.chdir(os.path.abspath(sNewWorkingDir))
-    try:
-        yield sNewWorkingDir
-    finally:
-        os.chdir(sOldWorkingDir)
 
 
 class RepoLite:

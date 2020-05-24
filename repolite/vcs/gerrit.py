@@ -27,13 +27,46 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
+import json
 import random
 import re
 import subprocess
 from collections import OrderedDict
 
+import requests
+
 from repolite.vcs import git
 from repolite.util.misc import FatalError
+
+
+class ApiClient:
+    def __init__(self, sBaseUrl, sUsername, sPassword):
+        self.sBaseUrl = sBaseUrl
+        self.oSession = requests.session()
+        self.oSession.auth = (sUsername, sPassword)
+
+    def url(self, sUrl):
+        return "/".join([self.sBaseUrl, "a", sUrl])
+
+    def request(self, sMethod, sUrl, bGetJson=False, **kwargs):
+        oResponse = self.oSession.request(sMethod, self.url(sUrl), **kwargs)
+        oResponse.raise_for_status()
+        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
+
+    def get(self, sUrl, bGetJson=False, **kwargs):
+        return self.request("GET", sUrl, bGetJson=bGetJson, **kwargs)
+
+    def put(self, sUrl, bGetJson=False, **kwargs):
+        return self.request("PUT", sUrl, bGetJson=bGetJson, **kwargs)
+
+    def post(self, sUrl, bGetJson=False, **kwargs):
+        return self.request("POST", sUrl, bGetJson=bGetJson, **kwargs)
+
+    def delete(self, sUrl, bGetJson=False, **kwargs):
+        return self.request("DELETE", sUrl, bGetJson=bGetJson, **kwargs)
+
+    def getChange(self, sChangeId):
+        return self.get("changes/%s" % sChangeId, bGetJson=True)
 
 
 def push(sTopic=None, sTargetBranch="master"):
@@ -102,3 +135,9 @@ def rebase(sTargetBranch, bIgnoreChangeIds=False):
         subprocess.run(["git", "branch", "-D", sCurrentBranch])
     else:
         subprocess.run(["git", "checkout", "-B", sCurrentBranch], check=True)
+
+
+def getChangeId():
+    sCommitMsg = git.getLastCommitMsg()
+    oMatch = re.search(r"^\s*Change-Id:\s*(.*)", sCommitMsg, re.MULTILINE)
+    return oMatch.group(1).strip() if oMatch is not None else None

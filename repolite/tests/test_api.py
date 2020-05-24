@@ -21,27 +21,33 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""setup.py"""
+"""test_api.py"""
 
 __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
-from setuptools import setup, find_packages
+import os
 
-setup(
-    name='RepoLite',
-    version='0.1.0-alpha01',
-    description='Command line tools to manage Gerrit repositories',
-    author=__author__,
-    author_email=__email__,
-    packages=find_packages(exclude=["*.tests", "*.tests.*"]),
-    install_requires=["blessed~=1.17.5", "requests~=2.23.0"],
-    entry_points={
-        "console_scripts": [
-            "repo = repolite.main_repo:main",
-            "gerrit = repolite.main_gerrit:main",
-        ],
-    },
-    python_requires='>=3.7'
-)
+from repolite.tests.util.test_base import TestBase
+from repolite.util.misc import changeWorkingDir
+from repolite.vcs import gerrit
+
+
+class TestApi(TestBase):
+    def test_getChange(self):
+        self.createCommit()
+        self.push()
+
+        for sProjectFolder in self.lProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                sProjectName = os.path.basename(sProjectFolder)
+                sChangeId = gerrit.getChangeId()
+                dChange = self.oApiClient.getChange("%s~master~%s" % (sProjectName, sChangeId))
+
+                assert dChange is not None
+                assert dChange["id"] == "%s~master~%s" % (sProjectName, sChangeId)
+                assert dChange["project"] == sProjectName
+                assert dChange["branch"] == "master"
+                assert dChange["change_id"] == sChangeId
+                assert dChange["status"] == "NEW"

@@ -27,7 +27,6 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
-import json
 import os
 import shutil
 import signal
@@ -41,37 +40,9 @@ from urllib.parse import urlparse
 import requests
 from requests import RequestException
 
-from repolite.util.misc import FatalError
-
-
-class GerritClient:
-    def __init__(self, sBaseUrl, sUsername, sPassword):
-        self.sBaseUrl = sBaseUrl
-        self.oSession = requests.session()
-        self.oSession.auth = (sUsername, sPassword)
-
-    def url(self, sUrl):
-        return "/".join([self.sBaseUrl, "a", sUrl])
-
-    def get(self, sUrl, bGetJson=False, **kwargs):
-        oResponse = self.oSession.get(self.url(sUrl), **kwargs)
-        oResponse.raise_for_status()
-        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
-
-    def put(self, sUrl, bGetJson=False, **kwargs):
-        oResponse = self.oSession.put(self.url(sUrl), **kwargs)
-        oResponse.raise_for_status()
-        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
-
-    def post(self, sUrl, bGetJson=False, **kwargs):
-        oResponse = self.oSession.post(self.url(sUrl), **kwargs)
-        oResponse.raise_for_status()
-        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
-
-    def delete(self, sUrl, bGetJson=False, **kwargs):
-        oResponse = self.oSession.delete(self.url(sUrl), **kwargs)
-        oResponse.raise_for_status()
-        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
+from repolite.util.log import error
+from repolite.util.misc import FatalError, kill
+from repolite.vcs import gerrit
 
 
 class Setup:
@@ -82,7 +53,7 @@ class Setup:
         self.sGerritConfigFile = os.path.join(self.sGerritInstallationFolder, "etc", "gerrit.config")
         self.sAdminUsername = "admin"
         self.sAdminPassword = "admin"
-        self.oGerritClient = None
+        self.oApiClient = None
         self.oGerritProcess = None
         self.lProjectUrls = []
 
@@ -147,23 +118,23 @@ class Setup:
         oSession.put("http://localhost:8080/accounts/self/password.http",
                      json={"http_password": self.sAdminPassword}).raise_for_status()
 
-        self.oGerritClient = GerritClient("http://localhost:8080", self.sAdminUsername, self.sAdminPassword)
+        self.oApiClient = gerrit.ApiClient("http://localhost:8080", self.sAdminUsername, self.sAdminPassword)
         self.createProjects()
 
     def createProjects(self):
         print("Adding projects")
         self.lProjectUrls = []
         for sProject in ["Project1", "Project2", "Project3"]:
-            self.oGerritClient.put("projects/%s" % sProject, json={"create_empty_commit": True})
-            dJson = self.oGerritClient.get("config/server/info", bGetJson=True)
+            self.oApiClient.put("projects/%s" % sProject, json={"create_empty_commit": True})
+            dJson = self.oApiClient.get("config/server/info", bGetJson=True)
             self.lProjectUrls.append(dJson["download"]["schemes"]["ssh"]["url"].replace("${project}", sProject))
 
     def resetProjects(self):
         print("Deleting all projects")
-        for sProject in self.oGerritClient.get("projects/", bGetJson=True):
+        for sProject in self.oApiClient.get("projects/", bGetJson=True):
             if sProject.lower() not in ["all-projects", "all-users"]:
-                self.oGerritClient.post("projects/%s/delete-project~delete" % sProject,
-                                        json={"force": True, "preserve": False})
+                self.oApiClient.post("projects/%s/delete-project~delete" % sProject,
+                                     json={"force": True, "preserve": False})
         self.createProjects()
 
     def configureSsh(self):
@@ -191,19 +162,20 @@ class Setup:
     def stopGerrit(self):
         print("Stopping gerrit")
         if self.oGerritProcess is not None:
-            if os.name == "nt":
-                os.kill(self.oGerritProcess.pid, signal.CTRL_C_EVENT)
-            else:
-                self.oGerritProcess.send_signal(signal.SIGINT)
-            try:
-                self.oGerritProcess.wait(timeout=10)
-            except subprocess.TimeoutExpired:
+            kill(self.oGerritProcess.pid, signal.SIGINT)
+            if self.waitForGerritProcess(10) is None:
                 print("Gerrit did not response to SIGINT, sending SIGTERM")
-                os.kill(self.oGerritProcess.pid, signal.SIGTERM)
-            except KeyboardInterrupt:
-                pass  # Expected
-            finally:
-                self.oGerritProcess = None
+                self.oGerritProcess.terminate()
+                if self.waitForGerritProcess(5) is None:
+                    error("Unable to stop Gerrit")
+            self.oGerritProcess = None
+
+    def waitForGerritProcess(self, iTimeout):
+        # Unfortunately using self.oGerritProcess.wait() seems to block the process itself, so we use our own loop
+        iTimeStart = time.time()
+        while self.oGerritProcess.poll() is None and time.time() - iTimeStart < iTimeout:
+            time.sleep(1)
+        return self.oGerritProcess.poll()
 
     def readGerritConfig(self):
         oConfig = ConfigParser(dict_type=ConcatOrderedDict, strict=False)
