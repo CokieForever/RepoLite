@@ -32,11 +32,10 @@ import re
 import shlex
 import subprocess
 import sys
-from collections import Counter
 
 import requests
 
-from repolite.tests.utilities.test_setup import Setup, removeFolder, withRetry, getExecutablePath, configureGit
+from repolite.tests.util.test_setup import Setup, removeFolder, withRetry, getExecutablePath, configureGit
 
 INITIAL_COMMIT_MSG = "Initial empty repository"
 
@@ -49,7 +48,7 @@ class TestRepo:
     def setup_class(cls):
         try:
             cls.oTestSetup.setup()
-        except:  # noqa: E723
+        except:  # noqa: E722
             cls.teardown_class()
             raise
 
@@ -93,9 +92,9 @@ class TestRepo:
         if "capture_output" not in kwargs:
             kwargs["capture_output"] = True
         if kwargs["capture_output"] and "encoding" not in kwargs:
-            kwargs["encoding"] = "latin-1"
-        dEnv = os.environ
-        dEnv["PYTHONPATH"] = (";" if os.name == "nt" else ":").join(sys.path)
+            kwargs["encoding"] = "utf-8"
+        dEnv = os.environ.copy()
+        dEnv["PYTHONPATH"] = os.pathsep.join(sys.path)
         sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main_repo.py"))
         return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
@@ -106,7 +105,7 @@ class TestRepo:
         if "capture_output" not in kwargs:
             kwargs["capture_output"] = True
         if kwargs["capture_output"] and "encoding" not in kwargs:
-            kwargs["encoding"] = "latin-1"
+            kwargs["encoding"] = "utf-8"
         return subprocess.run(["git"] + lArgs, **kwargs)
 
     def getCurrentBranch(self, sProjectFolder):
@@ -239,21 +238,21 @@ class TestRepo:
             assert self.getAllBranches(sProjectFolder) == ["topic_2"]
             assert self.getCurrentBranch(sProjectFolder) == "topic_2"
 
-    def test_repoTopic_whenNoTopic(self):
-        sOutput = self.runRepo(["topic"]).stdout
-
-        lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s: (no topic)" % os.path.basename(s) for s in self.lProjectFolders]
-        assert Counter(lOutputLines) == Counter(lExpectedOutputLines)
-
-    def test_repoTopic_whenTopic(self):
+    def test_repoTopic(self):
         self.runRepo(["start", "topic_test"])
 
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
         lExpectedOutputLines = ["%s: %s" % (os.path.basename(s), "topic_test") for s in self.lProjectFolders]
-        assert Counter(lOutputLines) == Counter(lExpectedOutputLines)
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+    def test_repoTopic_whenNoTopic(self):
+        sOutput = self.runRepo(["topic"]).stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = ["%s: (none)" % os.path.basename(s) for s in self.lProjectFolders]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
     def test_repoPush(self):
         self.runRepo(["start", "topic"])

@@ -30,8 +30,9 @@ __license__ = "MIT"
 import argparse
 import subprocess
 
-from repolite.utilities import gerrit
-from repolite.utilities.exceptions import FatalError
+from repolite.vcs import gerrit
+from repolite.util.log import fatalError
+from repolite.util.misc import FatalError
 
 
 class Gerrit:
@@ -62,9 +63,9 @@ def main():
     try:
         oGerrit.run()
     except FatalError as e:
-        print("FATAL ERROR: %s" % e)
+        fatalError("%s" % e)
     except KeyboardInterrupt:
-        print("Program interrupted.")
+        fatalError("Program interrupted.")
 
 
 def parseArgs():

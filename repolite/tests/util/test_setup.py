@@ -41,6 +41,8 @@ from urllib.parse import urlparse
 import requests
 from requests import RequestException
 
+from repolite.util.misc import FatalError
+
 
 class GerritClient:
     def __init__(self, sBaseUrl, sUsername, sPassword):
@@ -116,7 +118,7 @@ class Setup:
         if bWait:
             self.waitForGerrit()
 
-    def waitForGerrit(self, iTimeout=30):
+    def waitForGerrit(self, iTimeout=60):
         print("Waiting for gerrit")
         iStartTime = time.time()
         while True:
@@ -126,7 +128,7 @@ class Setup:
                 break
             except RequestException:
                 if time.time() - iStartTime >= iTimeout:
-                    raise
+                    raise FatalError("Gerrit does not seem to start")
 
     def configureGerrit(self):
         print("Generating SSH key")
@@ -151,7 +153,7 @@ class Setup:
     def createProjects(self):
         print("Adding projects")
         self.lProjectUrls = []
-        for sProject in ["Project1", "Project2"]:
+        for sProject in ["Project1", "Project2", "Project3"]:
             self.oGerritClient.put("projects/%s" % sProject, json={"create_empty_commit": True})
             dJson = self.oGerritClient.get("config/server/info", bGetJson=True)
             self.lProjectUrls.append(dJson["download"]["schemes"]["ssh"]["url"].replace("${project}", sProject))
@@ -173,7 +175,7 @@ class Setup:
 
         oUrl = urlparse(self.lProjectUrls[0])
         lKeys = subprocess.run(["ssh-keyscan", "-p", str(oUrl.port), oUrl.hostname],
-                               capture_output=True, check=True, encoding="latin-1").stdout.splitlines()
+                               capture_output=True, check=True, encoding="utf-8").stdout.splitlines()
         with open(sHostsFile, "w") as oFile:
             oFile.write("\n".join(lKeys) + "\n")
 

@@ -31,18 +31,17 @@ import copy
 import os
 import subprocess
 
-from repolite.utilities.exceptions import FatalError
+from repolite.util.misc import FatalError
 
 
 def getFirstRemote():
-    return subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="latin-1",
+    return subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="utf-8",
                           check=True).stdout.strip().splitlines()[0]
 
 
 def getCurrentBranch():
     return subprocess.run(["git", "branch", "--show-current"],
-                          stdout=subprocess.PIPE,
-                          encoding="latin-1", check=True).stdout.strip()
+                          stdout=subprocess.PIPE, encoding="utf-8", check=True).stdout.strip()
 
 
 def cherryPick(sCommitId, xOnAbort=None):

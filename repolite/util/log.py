@@ -21,12 +21,46 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Exceptions definitions"""
+"""Log utilities"""
 
 __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
+import sys
 
-class FatalError(ValueError):
-    pass
+from blessed import Terminal
+
+from repolite.util.misc import FatalError
+
+oTerminal = Terminal()
+
+
+def highlight(sMsg):
+    print(oTerminal.blue(sMsg))
+
+
+def success(sMsg):
+    print(oTerminal.green(sMsg))
+
+
+def fullSuccess(sMsg, bExit=True):
+    print(oTerminal.white_on_green(sMsg))
+    if bExit:
+        sys.exit(0)
+
+
+def fatalError(sMsg, bExit=True):
+    print(oTerminal.white_on_red("ERROR: %s" % sMsg))
+    if bExit:
+        sys.exit(1)
+
+
+def error(sMsg, bRaise=True):
+    print(oTerminal.red("ERROR: %s" % sMsg))
+    if bRaise:
+        raise FatalError(sMsg)
+
+
+def warning(sMsg):
+    print(oTerminal.orange("WARN: %s" % sMsg))

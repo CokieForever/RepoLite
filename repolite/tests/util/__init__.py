@@ -21,27 +21,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""setup.py"""
+"""__init__.py"""
 
 __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
-
-from setuptools import setup, find_packages
-
-setup(
-    name='RepoLite',
-    version='0.1.0-alpha01',
-    description='Command line tools to manage Gerrit repositories',
-    author=__author__,
-    author_email=__email__,
-    packages=find_packages(exclude=["*.tests", "*.tests.*"]),
-    install_requires=["blessed~=1.17.5"],
-    entry_points={
-        "console_scripts": [
-            "repo = repolite.main_repo:main",
-            "gerrit = repolite.main_gerrit:main",
-        ],
-    },
-    python_requires='>=3.7'
-)

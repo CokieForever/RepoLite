@@ -32,16 +32,22 @@ import inspect
 import os
 import shlex
 import subprocess
-import sys
+from collections import OrderedDict, Counter
 from contextlib import contextmanager
 from urllib.parse import urlparse, unquote
 
-from repolite.utilities import git, gerrit
-from repolite.utilities.exceptions import FatalError
+from repolite.vcs import gerrit, git
+from repolite.util.log import error, warning, highlight, fatalError, success, fullSuccess, oTerminal
+from repolite.util.misc import strOrDefault, FatalError
 
 
 def KeepInvalid(xFunction):
     xFunction.bKeepInvalid = True
+    return xFunction
+
+
+def ForAll(xFunction):
+    xFunction.bForAll = True
     return xFunction
 
 
@@ -66,26 +72,39 @@ class RepoLite:
         raise FatalError("Command %s is not implemented." % self.oArgs.command)
 
     def executeForAll(self, xFunction):
-        bKeepInvalid = getattr(xFunction, "bKeepInvalid", False)
-        dRepos = self.readManifest(bKeepInvalid=bKeepInvalid)
+        dRepos = self.readManifest(bKeepInvalid=getattr(xFunction, "bKeepInvalid", False))
+        if not dRepos:
+            raise FatalError("There is no valid repository defined.")
+        if getattr(xFunction, "bForAll", False):
+            return xFunction(dRepos)
+        else:
+            def doCallFunction(sRepoUrl):
+                highlight("\n### %s ###" % os.path.basename(os.getcwd()))
+                if len(inspect.getfullargspec(xFunction)[0]) > 1:
+                    xFunction(sRepoUrl)
+                else:
+                    xFunction()
+                success("Done")
+
+            return self.runInRepos(dRepos, doCallFunction)
+
+    def runInRepos(self, dRepos, xFunction):
         lErrorRepos = []
         for sRepoUrl, sDirPath in dRepos.items():
+            sRepoName = os.path.basename(sDirPath)
             try:
                 os.makedirs(sDirPath, exist_ok=True)
                 with changeWorkingDir(sDirPath):
-                    if len(inspect.getfullargspec(xFunction)[0]) > 1:
-                        xFunction(sRepoUrl)
-                    else:
-                        xFunction()
+                    xFunction(sRepoUrl)
             except (subprocess.CalledProcessError, FatalError, OSError) as e:
-                print("%s: ERROR: %s" % (os.path.basename(sDirPath), e))
+                error("[%s] %s" % (sRepoName, e), bRaise=False)
                 lErrorRepos.append(sDirPath)
         return lErrorRepos
 
     def readManifest(self, bKeepInvalid=False):
         if not os.path.isfile(self.oArgs.manifest):
-            raise FatalError("The manifest %s does not exist." % self.oArgs.manifest)
-        dRepos = {}
+            raise FatalError("The manifest file %s does not exist." % self.oArgs.manifest)
+        dRepos = OrderedDict()
         try:
             with open(self.oArgs.manifest) as oFile:
                 for sLine in oFile:
@@ -97,7 +116,7 @@ class RepoLite:
                             sDirPath = unquote(urlparse(sRepoUrl, allow_fragments=True).path.split("/")[-1])
                         sDirPath = os.path.abspath(sDirPath)
                         if not bKeepInvalid and not os.path.isdir(sDirPath):
-                            print("WARN: Directory %s does not exist, skipped." % sDirPath)
+                            warning("Directory %s does not exist, skipped." % sDirPath)
                         else:
                             dRepos[sRepoUrl] = sDirPath
         except OSError as e:
@@ -106,57 +125,84 @@ class RepoLite:
 
     @KeepInvalid
     def SYNC(self, sRepoUrl):
-        print("Syncing repo %s" % sRepoUrl)
         if not os.path.isdir(".git"):
+            print("Cloning from %s" % sRepoUrl)
             subprocess.run(["git", "clone", sRepoUrl, "."], check=True)
             sCurrentBranch = git.getCurrentBranch()
             subprocess.run(["git", "checkout", "HEAD", "--detach"], check=True)
             subprocess.run(["git", "branch", "-d", sCurrentBranch], check=True)
         else:
+            print("Syncing from %s" % sRepoUrl)
             subprocess.run(["git", "fetch", git.getFirstRemote(), "HEAD"], check=True)
             if self.oArgs.detach:
                 subprocess.run(["git", "checkout", "FETCH_HEAD", "--detach"], check=True)
             else:
                 gerrit.rebase("FETCH_HEAD", bIgnoreChangeIds=True)
-        print("")
 
     def START(self):
+        print("Creating new topic: %s -> %s" % (strOrDefault(git.getCurrentBranch(), "(none)"), self.oArgs.topic))
         subprocess.run(["git", "checkout", "-b", self.oArgs.topic], check=True)
 
     def SWITCH(self):
+        print("Switching topic: %s -> %s" % (strOrDefault(git.getCurrentBranch(), "(none)"), self.oArgs.topic))
         subprocess.run(["git", "checkout", self.oArgs.topic], check=True)
 
     def END(self):
         if git.getCurrentBranch() == self.oArgs.topic:
+            print("Detaching HEAD")
             subprocess.run(["git", "fetch", git.getFirstRemote(), "HEAD"], check=True)
             subprocess.run(["git", "checkout", "FETCH_HEAD", "--detach"], check=True)
+        print("Deleting topic %s" % self.oArgs.topic)
         subprocess.run(["git", "branch", "-D", self.oArgs.topic], check=True)
 
     def FORALL(self):
-        print("\nExecuting command in %s" % os.path.basename(os.getcwd()))
+        print("Running command")
         subprocess.run(shlex.split(self.oArgs.command_line), check=True)
 
-    def TOPIC(self):
-        sCurrentBranch = git.getCurrentBranch()
-        print("%s: %s" % (os.path.basename(os.getcwd()), sCurrentBranch if sCurrentBranch else "(no topic)"))
+    @ForAll
+    def TOPIC(self, dRepos):
+        dTopics = OrderedDict()
 
-    def PUSH(self):
+        def topic(sRepoUrl):
+            sRepoName = os.path.basename(os.getcwd())
+            dTopics[sRepoName] = strOrDefault(git.getCurrentBranch(), "(none)")
+
+        lErrorRepos = self.runInRepos(dRepos, topic)
+        sMainTopic = Counter(dTopics.values()).most_common(1)[0][0]
+        for sRepoName, sTopic in dTopics.items():
+            print("%s: %s" % (sRepoName, oTerminal.green(sTopic) if sTopic == sMainTopic else oTerminal.red(sTopic)))
+
+        return lErrorRepos
+
+    def PUSH(self, sRepoUrl):
+        print("Pushing changes to %s" % sRepoUrl)
         gerrit.push()
 
     def DOWNLOAD(self, sRepoUrl):
         if self.oArgs.repo == urlparse(sRepoUrl, allow_fragments=True).path[1:]:
+            print("Downloading patch %s from %s" % (self.oArgs.patch, sRepoUrl))
             gerrit.download(self.oArgs.patch, bDetach=self.oArgs.detach)
+        else:
+            print("Skipped")
 
     def REBASE(self):
+        print("Rebasing current state on %s" % self.oArgs.topic)
         gerrit.rebase(self.oArgs.topic)
 
     def RENAME(self):
-        subprocess.run(["git", "branch", "-m", self.oArgs.topic], check=True)
+        sCurrentBranch = git.getCurrentBranch()
+        if sCurrentBranch:
+            print("Renaming topic: %s -> %s" % (sCurrentBranch, self.oArgs.topic))
+            subprocess.run(["git", "branch", "-m", self.oArgs.topic], check=True)
+        else:
+            error("There is no topic")
 
     def STASH(self):
+        print("Stashing content")
         subprocess.run(["git", "stash"], check=True)
 
     def POP(self):
+        print("Retrieving stashed content")
         subprocess.run(["git", "stash", "pop"], check=True)
 
 
@@ -164,16 +210,18 @@ def main():
     oRepoLite = RepoLite(parseArgs())
     try:
         lErrorRepos = [os.path.basename(s) for s in oRepoLite.run()]
+        print("")
         if lErrorRepos:
-            print("ERROR: The command failed in the following repos: %s. Please check the log for details."
-                  % ", ".join(lErrorRepos))
-            sys.exit(1)
+            fatalError("The command failed in the following repos: %s. Please check the log for details."
+                       % ", ".join(lErrorRepos))
+        else:
+            fullSuccess("Execution successfully completed.")
     except FatalError as e:
-        print("FATAL ERROR: %s" % e)
-        sys.exit(1)
+        print("")
+        fatalError("%s" % e)
     except KeyboardInterrupt:
-        print("Program interrupted.")
-        sys.exit(1)
+        print("")
+        fatalError("Program interrupted.")
 
 
 def parseArgs():
