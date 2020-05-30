@@ -168,9 +168,16 @@ class RepoLite:
             dTopics[sRepoName] = strOrDefault(git.getCurrentBranch(), "(none)")
 
         lErrorRepos = self.runInRepos(dRepos, topic)
-        sMainTopic = Counter(dTopics.values()).most_common(1)[0][0]
-        for sRepoName, sTopic in dTopics.items():
-            print("%s: %s" % (sRepoName, oTerminal.green(sTopic) if sTopic == sMainTopic else oTerminal.red(sTopic)))
+
+        lTopics = list(set(dTopics.values()))
+        if len(lTopics) == 1:
+            print(oTerminal.green(lTopics[0]))
+        else:
+            iMaxLen = max(len(s) for s in lTopics)
+            sMainTopic = Counter(dTopics.values()).most_common(1)[0][0]
+            for sRepoName, sTopic in dTopics.items():
+                print("%s %s %s" % (sRepoName, "".join(["."] * (iMaxLen - len(sTopic) + 4)),
+                                    oTerminal.green(sTopic) if sTopic == sMainTopic else oTerminal.red(sTopic)))
 
         return lErrorRepos
 
@@ -203,7 +210,11 @@ class RepoLite:
 
     def POP(self):
         print("Retrieving stashed content")
-        subprocess.run(["git", "stash", "pop"], check=True)
+        sOutput = subprocess.run(["git", "stash", "list"], check=True, capture_output=True, encoding="utf-8").stdout
+        if list(filter(bool, sOutput.splitlines())):
+            subprocess.run(["git", "stash", "pop"], check=True)
+        else:
+            warning("No content to retrieve")
 
 
 def main():

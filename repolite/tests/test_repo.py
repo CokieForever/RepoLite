@@ -244,14 +244,15 @@ class TestRepo:
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s: %s" % (os.path.basename(s), "topic_test") for s in self.lProjectFolders]
-        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+        assert lOutputLines[0] == "topic_test"
 
-    def test_repoTopic_whenNoTopic(self):
+    def test_repoTopic_whenMultipleTopic(self):
+        self.runGit(["checkout", "-b", "topic_test"], self.lProjectFolders[0])
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s: (none)" % os.path.basename(s) for s in self.lProjectFolders]
+        lExpectedOutputLines = ["%s ........ (none)" % os.path.basename(s) for s in self.lProjectFolders]
+        lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(self.lProjectFolders[0])
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
     def test_repoPush(self):
@@ -391,3 +392,13 @@ class TestRepo:
         for sProjectFolder in self.lProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "Modified!"
+
+    def test_repoPop_whenNoContent(self):
+        sOutput = self.runRepo(["pop"]).stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.lProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder),
+                                     "Retrieving stashed content", "WARN: No content to retrieve", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
