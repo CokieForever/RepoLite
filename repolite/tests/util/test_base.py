@@ -31,6 +31,8 @@ import os
 import shlex
 import subprocess
 import sys
+from collections import OrderedDict
+from urllib.parse import urlparse
 
 import requests
 
@@ -62,20 +64,16 @@ class TestBase:
         self.sRepoFolder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "repo"))
         self.cleanRepoFolder()
         self.runRepo(["sync"])
-        self.lProjectFolders = [os.path.join(self.sRepoFolder, sUrl.split("/")[-1])
-                                for sUrl in self.oTestSetup.lProjectUrls]
-        dJson = self.oApiClient.get("config/server/info", bGetJson=True)
+        dJson = self.oApiClient.get("config/server/info")
         sGetMsgHookCommand = dJson["download"]["schemes"]["ssh"]["clone_commands"]["Clone with commit-msg hook"] \
             .split("&&")[1].strip()
         if os.name == "nt":
             sScpExe = getExecutablePath("scp.exe")
             if sScpExe:
                 sGetMsgHookCommand = sGetMsgHookCommand.replace("scp", '"%s"' % sScpExe)
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             configureGit(sProjectFolder)
-            sProjectName = os.path.basename(sProjectFolder)
-            subprocess.run(shlex.split(sGetMsgHookCommand.replace("${project-base-name}", sProjectName)),
-                           check=True, cwd=os.path.dirname(sProjectFolder))
+            subprocess.run(shlex.split(sGetMsgHookCommand.replace("${project-base-name}", sProjectFolder)), check=True)
 
     def teardown_method(self, _):
         self.oTestSetup.resetProjects()
@@ -83,9 +81,18 @@ class TestBase:
     def cleanRepoFolder(self):
         withRetry(lambda: removeFolder(self.sRepoFolder))
         withRetry(lambda: os.makedirs(self.sRepoFolder))
+        self.dProjectFolders = OrderedDict()
         with open(os.path.join(self.sRepoFolder, "manifest.txt"), "w") as oFile:
             for sUrl in self.oTestSetup.lProjectUrls:
-                oFile.write(sUrl + "\n")
+                oFile.write(sUrl)
+                sProjectName = urlparse(sUrl).path[1:]
+                if "/" in sProjectName:
+                    sProjectDir = sProjectName.replace("/", "_")
+                    oFile.write(" %s" % sProjectDir)
+                else:
+                    sProjectDir = sProjectName
+                oFile.write("\n")
+                self.dProjectFolders[os.path.join(self.sRepoFolder, sProjectDir)] = sProjectName
 
     def runGit(self, lArgs, **kwargs):
         if "check" not in kwargs:
@@ -110,7 +117,7 @@ class TestBase:
         return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
     def createCommit(self, sId="1", bAmend=False):
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 sTestFileName = "test_%s.txt" % sId
                 with open(sTestFileName, "w") as oFile:
@@ -129,9 +136,8 @@ class TestBase:
     def push(self):
         self.runRepo(["push"])
         lChangeNumbers = []
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName), bGetJson=True)
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
             lChangeNumbers.append(dJson[0]["_number"])
         return lChangeNumbers
 

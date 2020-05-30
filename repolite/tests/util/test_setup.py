@@ -35,7 +35,7 @@ import subprocess
 import time
 from collections import OrderedDict
 from configparser import ConfigParser
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import requests
 from requests import RequestException
@@ -124,16 +124,16 @@ class Setup:
     def createProjects(self):
         print("Adding projects")
         self.lProjectUrls = []
-        for sProject in ["Project1", "Project2", "Project3"]:
-            self.oApiClient.put("projects/%s" % sProject, json={"create_empty_commit": True})
-            dJson = self.oApiClient.get("config/server/info", bGetJson=True)
-            self.lProjectUrls.append(dJson["download"]["schemes"]["ssh"]["url"].replace("${project}", sProject))
+        for sProject in ["Project1", "Project2", "sub/Project3"]:
+            self.oApiClient.put("projects/%s" % quote(sProject, safe=""), json={"create_empty_commit": True})
+            dJson = self.oApiClient.get("config/server/info")
+            self.lProjectUrls.append(dJson["download"]["schemes"]["ssh"]["url"].replace("${project}", quote(sProject)))
 
     def resetProjects(self):
         print("Deleting all projects")
-        for sProject in self.oApiClient.get("projects/", bGetJson=True):
+        for sProject in self.oApiClient.get("projects/"):
             if sProject.lower() not in ["all-projects", "all-users"]:
-                self.oApiClient.post("projects/%s/delete-project~delete" % sProject,
+                self.oApiClient.post("projects/%s/delete-project~delete" % quote(sProject, safe=""),
                                      json={"force": True, "preserve": False})
         self.createProjects()
 

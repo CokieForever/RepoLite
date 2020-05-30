@@ -27,7 +27,7 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
-import os
+from urllib.parse import quote
 
 from repolite.tests.util.test_base import TestBase
 from repolite.util.misc import changeWorkingDir
@@ -39,14 +39,13 @@ class TestApi(TestBase):
         self.createCommit()
         self.push()
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
             with changeWorkingDir(sProjectFolder):
-                sProjectName = os.path.basename(sProjectFolder)
                 sChangeId = gerrit.getChangeId()
-                dChange = self.oApiClient.getChange("%s~master~%s" % (sProjectName, sChangeId))
+                dChange = self.oApiClient.getChange(sChangeId, sProjectName)
 
                 assert dChange is not None
-                assert dChange["id"] == "%s~master~%s" % (sProjectName, sChangeId)
+                assert dChange["id"] == "%s~master~%s" % (quote(sProjectName, safe=""), sChangeId)
                 assert dChange["project"] == sProjectName
                 assert dChange["branch"] == "master"
                 assert dChange["change_id"] == sChangeId

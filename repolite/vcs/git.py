@@ -35,28 +35,33 @@ from repolite.util.misc import FatalError
 
 
 def getFirstRemote():
-    return subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="utf-8",
+    return subprocess.run(["git", "remote"], capture_output=True, encoding="utf-8",
                           check=True).stdout.strip().splitlines()[0]
 
 
 def getCurrentBranch():
     return subprocess.run(["git", "branch", "--show-current"],
-                          stdout=subprocess.PIPE, encoding="utf-8", check=True).stdout.strip()
+                          capture_output=True, encoding="utf-8", check=True).stdout.strip()
 
 
 def getLastCommitMsg():
-    return subprocess.run(["git", "log", "-1", "--format=full"], stdout=subprocess.PIPE,
+    return subprocess.run(["git", "log", "-1", "--format=full"], capture_output=True,
                           encoding="utf-8", check=True).stdout.strip()
 
 
 def getAllBranches():
-    return [s[2:] for s in subprocess.run(["git", "branch"], stdout=subprocess.PIPE,
+    return [s[2:] for s in subprocess.run(["git", "branch"], capture_output=True,
                                           encoding="utf-8", check=True).stdout.splitlines()]
 
 
 def getGitMessages():
-    return subprocess.run(["git", "log", "--format=format:%s"], stdout=subprocess.PIPE,
+    return subprocess.run(["git", "log", "--format=format:%s"], capture_output=True,
                           encoding="utf-8", check=True).stdout.splitlines()
+
+
+def getRemoteUrl(sRemote="origin"):
+    return subprocess.run(["git", "config", "--get", "remote.%s.url" % sRemote], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip()
 
 
 def cherryPick(sCommitId, xOnAbort=None):

@@ -32,11 +32,12 @@ import random
 import re
 import subprocess
 from collections import OrderedDict
+from urllib.parse import urlparse, unquote, quote
 
 import requests
 
-from repolite.vcs import git
 from repolite.util.misc import FatalError
+from repolite.vcs import git
 
 
 class ApiClient:
@@ -48,32 +49,35 @@ class ApiClient:
     def url(self, sUrl):
         return "/".join([self.sBaseUrl, "a", sUrl])
 
-    def request(self, sMethod, sUrl, bGetJson=False, **kwargs):
+    def request(self, sMethod, sUrl, **kwargs):
         oResponse = self.oSession.request(sMethod, self.url(sUrl), **kwargs)
         oResponse.raise_for_status()
-        return json.loads(oResponse.content[5:]) if bGetJson else oResponse
+        try:
+            return json.loads(oResponse.content[5:]) if oResponse.content else None
+        except ValueError:
+            return None
 
-    def get(self, sUrl, bGetJson=False, **kwargs):
-        return self.request("GET", sUrl, bGetJson=bGetJson, **kwargs)
+    def get(self, sUrl, **kwargs):
+        return self.request("GET", sUrl, **kwargs)
 
-    def put(self, sUrl, bGetJson=False, **kwargs):
-        return self.request("PUT", sUrl, bGetJson=bGetJson, **kwargs)
+    def put(self, sUrl, **kwargs):
+        return self.request("PUT", sUrl, **kwargs)
 
-    def post(self, sUrl, bGetJson=False, **kwargs):
-        return self.request("POST", sUrl, bGetJson=bGetJson, **kwargs)
+    def post(self, sUrl, **kwargs):
+        return self.request("POST", sUrl, **kwargs)
 
-    def delete(self, sUrl, bGetJson=False, **kwargs):
-        return self.request("DELETE", sUrl, bGetJson=bGetJson, **kwargs)
+    def delete(self, sUrl, **kwargs):
+        return self.request("DELETE", sUrl, **kwargs)
 
-    def getChange(self, sChangeId):
-        return self.get("changes/%s" % sChangeId, bGetJson=True)
+    def getChange(self, sChangeId, sProject, sBranch="master"):
+        return self.get("changes/%s~%s~%s" % (quote(sProject, safe=""), sBranch, sChangeId))
 
 
 def push(sTopic=None, sTargetBranch="master"):
-    sRemote = subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="utf-8",
+    sRemote = subprocess.run(["git", "remote"], capture_output=True, encoding="utf-8",
                              check=True).stdout.strip().splitlines()[0]
     sCurrentBranch = subprocess.run(["git", "branch", "--show-current"], encoding="utf-8",
-                                    stdout=subprocess.PIPE, check=True).stdout.strip()
+                                    capture_output=True, check=True).stdout.strip()
     if sTopic is None and sCurrentBranch.startswith("crossrepo/"):
         sTopic = sCurrentBranch
 
@@ -89,7 +93,7 @@ def download(sPatch, bDetach=False):
         raise FatalError("%s is not a valid patch ID" % sPatch)
     sPatchChecksum = "%02d" % int(oMatch.group(1)[-2:])
 
-    sRemote = subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="utf-8",
+    sRemote = subprocess.run(["git", "remote"], capture_output=True, encoding="utf-8",
                              check=True).stdout.strip().splitlines()[0]
     subprocess.run(["git", "fetch", sRemote, "refs/changes/%s/%s" % (sPatchChecksum, sPatch)],
                    check=True)
@@ -102,11 +106,11 @@ def download(sPatch, bDetach=False):
 def cherry(sUpstream, sHead="HEAD"):
     dCommits = OrderedDict()
     for sCherry in subprocess.run(["git", "cherry", sUpstream, sHead], check=True,
-                                  encoding="utf-8", stdout=subprocess.PIPE).stdout.strip().splitlines():
+                                  encoding="utf-8", capture_output=True).stdout.strip().splitlines():
         sOperation, sCommitId = sCherry.strip().split(" ", maxsplit=1)
         if sOperation == "+":
             sCommitBody = subprocess.run(["git", "show", "-s", "--format=%b", sCommitId],
-                                         check=True, encoding="utf-8", stdout=subprocess.PIPE).stdout.strip()
+                                         check=True, encoding="utf-8", capture_output=True).stdout.strip()
             for sBodyLine in sCommitBody.splitlines():
                 if sBodyLine.startswith("Change-Id:"):
                     dCommits[sCommitId] = sBodyLine[len("Change-Id:"):].strip()
@@ -141,3 +145,8 @@ def getChangeId():
     sCommitMsg = git.getLastCommitMsg()
     oMatch = re.search(r"^\s*Change-Id:\s*(.*)", sCommitMsg, re.MULTILINE)
     return oMatch.group(1).strip() if oMatch is not None else None
+
+
+def getProject():
+    sUrl = git.getRemoteUrl()
+    return unquote(urlparse(sUrl).path[1:])

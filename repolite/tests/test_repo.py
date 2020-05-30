@@ -41,7 +41,7 @@ INITIAL_COMMIT_MSG = "Initial empty repository"
 
 class TestRepo(TestBase):
     def test_repoSync_checkout(self):
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 lBranches = git.getAllBranches()
                 assert len(lBranches) == 1
@@ -52,7 +52,7 @@ class TestRepo(TestBase):
     def test_repoStart_onDetached(self):
         self.runRepo(["start", "topic"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic"
                 assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
@@ -62,7 +62,7 @@ class TestRepo(TestBase):
         self.createCommit()
         self.runRepo(["start", "topic_2"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 assert git.getGitMessages() == ["Test commit (1)", INITIAL_COMMIT_MSG]
@@ -74,7 +74,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["sync", "-d"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == ""
                 assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
@@ -87,7 +87,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["switch", "topic_1"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_1"
                 assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
@@ -104,7 +104,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["sync"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 assert os.path.isfile("test_2.txt")
@@ -117,7 +117,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["end", "topic"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 lBranches = git.getAllBranches()
                 assert len(lBranches) == 1
@@ -132,7 +132,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["end", "topic_1"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getAllBranches() == ["topic_2"]
                 assert git.getCurrentBranch() == "topic_2"
@@ -146,12 +146,14 @@ class TestRepo(TestBase):
         assert lOutputLines[0] == "topic_test"
 
     def test_repoTopic_whenMultipleTopic(self):
-        self.runGit(["checkout", "-b", "topic_test"], self.lProjectFolders[0])
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            self.runGit(["checkout", "-b", "topic_test"])
+
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s ........ (none)" % os.path.basename(s) for s in self.lProjectFolders]
-        lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(self.lProjectFolders[0])
+        lExpectedOutputLines = ["%s ........ (none)" % os.path.basename(s) for s in self.dProjectFolders]
+        lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(next(iter(self.dProjectFolders)))
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
     def test_repoPush(self):
@@ -160,9 +162,8 @@ class TestRepo(TestBase):
 
         self.push()
 
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName), bGetJson=True)
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
             assert len(dJson) == 1
             assert dJson[0]["project"] == sProjectName
 
@@ -172,9 +173,8 @@ class TestRepo(TestBase):
 
         self.runRepo(["push"])
 
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName), bGetJson=True)
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
             assert len(dJson) == 1
             assert dJson[0]["project"] == sProjectName
             assert dJson[0]["topic"] == "crossrepo/topic"
@@ -187,9 +187,9 @@ class TestRepo(TestBase):
         self.runRepo(["switch", "topic_2"])
         self.createCommit(sId="2")
 
-        self.runRepo(["download", os.path.basename(self.lProjectFolders[0]), "%d/1" % iChangeNumber])
+        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 assert os.path.isfile("test_2.txt")
@@ -208,9 +208,9 @@ class TestRepo(TestBase):
         self.runRepo(["switch", "topic_2"])
         self.createCommit(sId="2")
 
-        self.runRepo(["download", "-d", os.path.basename(self.lProjectFolders[0]), "%d/1" % iChangeNumber])
+        self.runRepo(["download", "-d", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 if iIdx == 0:
                     assert git.getCurrentBranch() == ""
@@ -232,7 +232,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["rebase", "topic_1"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 assert os.path.isfile("test_1.txt")
@@ -250,7 +250,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["rebase", "topic_1"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 sFileName = "test_1.txt"
@@ -265,7 +265,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["rename", "renamed_topic"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "renamed_topic"
                 assert git.getAllBranches() == ["renamed_topic"]
@@ -273,13 +273,13 @@ class TestRepo(TestBase):
     def test_repoStash(self):
         self.runRepo(["start", "topic_1"])
         self.createCommit(sId="1")
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "w") as oFile:
                 oFile.write("Modified!")
 
         self.runRepo(["stash"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "This is a test (1)."
 
@@ -288,7 +288,7 @@ class TestRepo(TestBase):
 
         self.runRepo(["pop"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "Modified!"
 
@@ -297,7 +297,7 @@ class TestRepo(TestBase):
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
         lExpectedOutputLines = []
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder),
                                      "Retrieving stashed content", "WARN: No content to retrieve", "Done"]
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
