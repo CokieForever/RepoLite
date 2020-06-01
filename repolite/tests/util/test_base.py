@@ -32,9 +32,7 @@ import shlex
 import subprocess
 import sys
 from collections import OrderedDict
-from urllib.parse import urlparse
-
-import requests
+from urllib.parse import urlparse, quote_plus
 
 from repolite.tests.util.test_setup import Setup, getExecutablePath, configureGit, withRetry, removeFolder
 from repolite.util.misc import changeWorkingDir
@@ -113,6 +111,8 @@ class TestBase:
             kwargs["encoding"] = "utf-8"
         dEnv = os.environ.copy()
         dEnv["PYTHONPATH"] = os.pathsep.join(sys.path)
+        dEnv["USERPROFILE"] = self.oTestSetup.sRepoConfigFolder
+        dEnv["HOME"] = self.oTestSetup.sRepoConfigFolder
         sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main_repo.py"))
         return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
@@ -137,7 +137,7 @@ class TestBase:
         self.runRepo(["push"])
         lChangeNumbers = []
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
+            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
             lChangeNumbers.append(dJson[0]["_number"])
         return lChangeNumbers
 

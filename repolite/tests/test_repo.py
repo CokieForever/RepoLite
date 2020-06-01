@@ -29,8 +29,7 @@ __license__ = "MIT"
 
 import os
 import re
-
-import requests
+from urllib.parse import quote_plus
 
 from repolite.tests.util.test_base import TestBase
 from repolite.util.misc import changeWorkingDir
@@ -156,28 +155,73 @@ class TestRepo(TestBase):
         lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(next(iter(self.dProjectFolders)))
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
-    def test_repoPush(self):
+    def test_repoPush_newChange(self):
         self.runRepo(["start", "topic"])
         self.createCommit()
 
         self.push()
 
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
+            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
             assert len(dJson) == 1
             assert dJson[0]["project"] == sProjectName
 
-    def test_repoPush_crossrepo(self):
-        self.runRepo(["start", "crossrepo/topic"])
-        self.createCommit()
+    def test_repoPush_updateChange(self):
+        self.test_repoPush_newChange()
+        self.createCommit(bAmend=True)
 
-        self.runRepo(["push"])
+        self.push()
 
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
-            dJson = self.oApiClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName))
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
             assert len(dJson) == 1
             assert dJson[0]["project"] == sProjectName
-            assert dJson[0]["topic"] == "crossrepo/topic"
+            assert len(dJson[0]["revisions"]) == 2
+
+    def test_repoPush_whenNoNewChange(self):
+        self.test_repoPush_newChange()
+
+        sOutput = self.runRepo(["push"]).stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "WARN: Nothing to push", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 1
+            assert dJson[0]["project"] == sProjectName
+            assert len(dJson[0]["revisions"]) == 1
+
+    def test_repoPush_whenRemoteUpdated(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        iChangeNumber = self.push()[0]
+        self.oApiClient.put("changes/%d/message" % iChangeNumber, json={"message": "Updated!"})
+        self.createCommit(bAmend=True)
+
+        oProcess = self.runRepo(["push"], input="n", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        sName = os.path.basename(next(iter(self.dProjectFolders)))
+        lExpectedOutputLines = ["### %s ###" % sName, "WARN: You are about to overwrite unknown changes.",
+                                "Continue? (y/n): ERROR: [%s] Operation aborted" % sName]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for iIdx, (sProjectFolder, sProjectName) in enumerate(self.dProjectFolders.items()):
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 1
+            assert dJson[0]["project"] == sProjectName
+            assert len(dJson[0]["revisions"]) == 2
+            with changeWorkingDir(sProjectFolder):
+                sLastCommit = git.getLastCommit()
+            if iIdx == 0:
+                assert dJson[0]["current_revision"] != sLastCommit
+            else:
+                assert dJson[0]["current_revision"] == sLastCommit
 
     def test_repoDownload_rebase(self):
         self.runRepo(["start", "topic_2"])

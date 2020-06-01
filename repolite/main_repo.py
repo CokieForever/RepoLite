@@ -33,10 +33,13 @@ import os
 import shlex
 import subprocess
 from collections import OrderedDict, Counter
+from configparser import ConfigParser
 from urllib.parse import urlparse, unquote
 
+import requests
+
 from repolite.util.log import error, warning, highlight, fatalError, success, fullSuccess, oTerminal
-from repolite.util.misc import strOrDefault, FatalError, changeWorkingDir
+from repolite.util.misc import strOrDefault, FatalError, changeWorkingDir, hideFile
 from repolite.vcs import gerrit, git
 
 
@@ -53,6 +56,35 @@ def ForAll(xFunction):
 class RepoLite:
     def __init__(self, oArgs):
         self.oArgs = oArgs
+        self.oApiClient = None
+        self.sRootFolder = os.path.abspath(os.getcwd())
+        self.sRepoDataFile = os.path.join(self.sRootFolder, ".repolite", "data")
+
+    def getApiClient(self):
+        sConfigFilePath = os.path.join(os.path.expanduser("~"), ".repolite")
+        if not os.path.isfile(sConfigFilePath):
+            raise FatalError("The config file %s does not exist." % sConfigFilePath)
+
+        sWorkingDir = os.path.normcase(os.path.abspath(os.path.dirname(os.getcwd())))
+        oConfig = ConfigParser()
+        oConfig.read(sConfigFilePath)
+        dSection = oConfig["DEFAULT"]
+        for sSection in oConfig.sections():
+            sTarget = oConfig.get(sSection, "target", fallback=None)
+            if sTarget:
+                sTarget = os.path.normcase(os.path.abspath(os.path.join(os.path.dirname(sConfigFilePath), sTarget)))
+                if sWorkingDir == sTarget:
+                    dSection = oConfig[sSection]
+                    break
+
+        def getNotEmpty(sKey):
+            sValue = dSection.get(sKey, fallback=None)
+            if sValue is None:
+                raise FatalError("No value provided for %s in the config file" % sKey)
+            return sValue
+
+        self.oApiClient = gerrit.ApiClient(getNotEmpty("url"), getNotEmpty("username"), getNotEmpty("password"))
+        return self.oApiClient
 
     def run(self):
         oMethod = getattr(self, self.oArgs.command.upper())
@@ -86,7 +118,7 @@ class RepoLite:
                 with changeWorkingDir(sDirPath):
                     xFunction(sRepoUrl)
             except (subprocess.CalledProcessError, FatalError, OSError) as e:
-                error("[%s] %s" % (sRepoName, e), bRaise=False)
+                error("[%s] %s" % (sRepoName, e))
                 lErrorRepos.append(sDirPath)
         return lErrorRepos
 
@@ -103,7 +135,7 @@ class RepoLite:
                         (sRepoUrl, sDirPath) = lElements[0], " ".join(lElements[1:])
                         if not sDirPath:
                             sDirPath = unquote(urlparse(sRepoUrl, allow_fragments=True).path.split("/")[-1])
-                        sDirPath = os.path.abspath(sDirPath)
+                        sDirPath = os.path.join(self.sRootFolder, sDirPath)
                         if not bKeepInvalid and not os.path.isdir(sDirPath):
                             warning("Directory %s does not exist, skipped." % sDirPath)
                         else:
@@ -111,6 +143,27 @@ class RepoLite:
         except OSError as e:
             raise FatalError(e)
         return dRepos
+
+    def getRepoData(self):
+        oRepoData = ConfigParser()
+        if os.path.isfile(self.sRepoDataFile):
+            oRepoData.read(self.sRepoDataFile)
+        lSections = oRepoData.sections()
+        for sProjectUrl in self.readManifest(bKeepInvalid=False):
+            sProjectName = gerrit.getProjectName(sUrl=sProjectUrl)
+            if sProjectName not in lSections:
+                oRepoData.add_section(sProjectName)
+        return oRepoData
+
+    def saveRepoData(self, oRepoData):
+        sFolder = os.path.dirname(self.sRepoDataFile)
+        try:
+            os.makedirs(sFolder, exist_ok=True)
+            hideFile(sFolder)
+            with open(self.sRepoDataFile, "w") as oFile:
+                oRepoData.write(oFile)
+        except OSError as e:
+            raise FatalError(e)
 
     @KeepInvalid
     def SYNC(self, sRepoUrl):
@@ -152,11 +205,13 @@ class RepoLite:
     def TOPIC(self, dRepos):
         dTopics = OrderedDict()
 
-        def topic(sRepoUrl):
+        def topic():
             sRepoName = os.path.basename(os.getcwd())
             dTopics[sRepoName] = strOrDefault(git.getCurrentBranch(), "(none)")
 
-        lErrorRepos = self.runInRepos(dRepos, topic)
+        lErrorRepos = self.runInRepos(dRepos, lambda _: topic())
+        if lErrorRepos:
+            return lErrorRepos
 
         lTopics = list(set(dTopics.values()))
         if len(lTopics) == 1:
@@ -168,11 +223,33 @@ class RepoLite:
                 print("%s %s %s" % (sRepoName, "".join(["."] * (iMaxLen - len(sTopic) + 4)),
                                     oTerminal.green(sTopic) if sTopic == sMainTopic else oTerminal.red(sTopic)))
 
-        return lErrorRepos
+        return []
 
     def PUSH(self, sRepoUrl):
+        sChangeId = gerrit.getChangeId()
+        if not sChangeId:
+            raise FatalError("Unable to extract Change-Id")
+        sProject = gerrit.getProjectName()
+        oRepoData = self.getRepoData()
+        try:
+            dChangeData = self.getApiClient().getChangeData(sChangeId, sProject, lAdditionalData=["CURRENT_REVISION"])
+        except requests.HTTPError as e:
+            if e.response.status_code != 404:
+                raise
+        else:
+            sRemoteCommit = dChangeData["current_revision"]
+            if sRemoteCommit == git.getLastCommit():
+                warning("Nothing to push")
+                return
+            elif sRemoteCommit != oRepoData.get(sProject, "push", fallback=None):
+                warning("You are about to overwrite unknown changes.")
+                sInput = input("Continue? (y/n): ")
+                if sInput != "y":
+                    raise FatalError("Operation aborted")
         print("Pushing changes to %s" % sRepoUrl)
         gerrit.push()
+        oRepoData.set(sProject, "push", git.getLastCommit())
+        self.saveRepoData(oRepoData)
 
     def DOWNLOAD(self, sRepoUrl):
         if self.oArgs.repo == urlparse(sRepoUrl, allow_fragments=True).path[1:]:
@@ -191,7 +268,7 @@ class RepoLite:
             print("Renaming topic: %s -> %s" % (sCurrentBranch, self.oArgs.topic))
             subprocess.run(["git", "branch", "-m", self.oArgs.topic], check=True)
         else:
-            error("There is no topic")
+            raise FatalError("There is no topic")
 
     def STASH(self):
         print("Stashing content")
@@ -263,7 +340,9 @@ def parseArgs():
 
     oSubparsers.add_parser("pop", help="Pops stash list of all repos")
 
-    return oParser.parse_args()
+    oArgs = oParser.parse_args()
+    oArgs.manifest = os.path.abspath(oArgs.manifest)
+    return oArgs
 
 
 if __name__ == "__main__":

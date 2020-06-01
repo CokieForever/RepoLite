@@ -40,7 +40,6 @@ from urllib.parse import urlparse, quote
 import requests
 from requests import RequestException
 
-from repolite.util.log import error
 from repolite.util.misc import FatalError, kill
 from repolite.vcs import gerrit
 
@@ -53,6 +52,7 @@ class Setup:
         self.sGerritConfigFile = os.path.join(self.sGerritInstallationFolder, "etc", "gerrit.config")
         self.sAdminUsername = "admin"
         self.sAdminPassword = "admin"
+        self.sRepoConfigFolder = os.path.join(self.sResDirPath, "repolite")
         self.oApiClient = None
         self.oGerritProcess = None
         self.lProjectUrls = []
@@ -62,6 +62,7 @@ class Setup:
         self.launchGerrit()
         self.configureGerrit()
         self.configureSsh()
+        self.configureRepo()
 
     def teardown(self):
         try:
@@ -159,6 +160,14 @@ class Setup:
                 os.remove(sHostsFile)
             os.rename(sBackupHostsFile, sHostsFile)
 
+    def configureRepo(self):
+        os.makedirs(self.sRepoConfigFolder, exist_ok=True)
+        with open(os.path.join(self.sRepoConfigFolder, ".repolite"), "w") as oFile:
+            oFile.write("[DEFAULT]\n" +
+                        "url = http://localhost:8080\n" +
+                        "username = %s\n" % self.sAdminUsername +
+                        "password = %s\n" % self.sAdminPassword)
+
     def stopGerrit(self):
         print("Stopping gerrit")
         if self.oGerritProcess is not None:
@@ -167,7 +176,7 @@ class Setup:
                 print("Gerrit did not response to SIGINT, sending SIGTERM")
                 self.oGerritProcess.terminate()
                 if self.waitForGerritProcess(5) is None:
-                    error("Unable to stop Gerrit")
+                    raise FatalError("Unable to stop Gerrit")
             self.oGerritProcess = None
 
     def waitForGerritProcess(self, iTimeout):

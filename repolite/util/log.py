@@ -31,8 +31,6 @@ import sys
 
 from blessed import Terminal
 
-from repolite.util.misc import FatalError
-
 oTerminal = Terminal()
 
 
@@ -56,10 +54,8 @@ def fatalError(sMsg, bExit=True):
         sys.exit(1)
 
 
-def error(sMsg, bRaise=True):
+def error(sMsg):
     print(oTerminal.red("ERROR: %s" % sMsg))
-    if bRaise:
-        raise FatalError(sMsg)
 
 
 def warning(sMsg):

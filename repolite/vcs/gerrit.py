@@ -69,18 +69,16 @@ class ApiClient:
     def delete(self, sUrl, **kwargs):
         return self.request("DELETE", sUrl, **kwargs)
 
-    def getChange(self, sChangeId, sProject, sBranch="master"):
-        return self.get("changes/%s~%s~%s" % (quote(sProject, safe=""), sBranch, sChangeId))
+    def getChangeData(self, sChangeId, sProject, sBranch="master", lAdditionalData=None):
+        if lAdditionalData:
+            sQuery = "?" + "&".join("o=%s" % s for s in lAdditionalData)
+        else:
+            sQuery = ""
+        return self.get("changes/%s~%s~%s%s" % (quote(sProject, safe=""), sBranch, sChangeId, sQuery))
 
 
 def push(sTopic=None, sTargetBranch="master"):
-    sRemote = subprocess.run(["git", "remote"], capture_output=True, encoding="utf-8",
-                             check=True).stdout.strip().splitlines()[0]
-    sCurrentBranch = subprocess.run(["git", "branch", "--show-current"], encoding="utf-8",
-                                    capture_output=True, check=True).stdout.strip()
-    if sTopic is None and sCurrentBranch.startswith("crossrepo/"):
-        sTopic = sCurrentBranch
-
+    sRemote = git.getFirstRemote()
     lArgs = ["git", "push", sRemote, "HEAD:refs/for/%s" % sTargetBranch]
     if sTopic:
         lArgs += ["-o", "topic=%s" % sTopic]
@@ -93,8 +91,7 @@ def download(sPatch, bDetach=False):
         raise FatalError("%s is not a valid patch ID" % sPatch)
     sPatchChecksum = "%02d" % int(oMatch.group(1)[-2:])
 
-    sRemote = subprocess.run(["git", "remote"], capture_output=True, encoding="utf-8",
-                             check=True).stdout.strip().splitlines()[0]
+    sRemote = git.getFirstRemote()
     subprocess.run(["git", "fetch", sRemote, "refs/changes/%s/%s" % (sPatchChecksum, sPatch)],
                    check=True)
     if bDetach:
@@ -147,6 +144,7 @@ def getChangeId():
     return oMatch.group(1).strip() if oMatch is not None else None
 
 
-def getProject():
-    sUrl = git.getRemoteUrl()
+def getProjectName(sUrl=None):
+    if not sUrl:
+        sUrl = git.getRemoteUrl()
     return unquote(urlparse(sUrl).path[1:])

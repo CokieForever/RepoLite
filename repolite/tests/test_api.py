@@ -42,7 +42,7 @@ class TestApi(TestBase):
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
             with changeWorkingDir(sProjectFolder):
                 sChangeId = gerrit.getChangeId()
-                dChange = self.oApiClient.getChange(sChangeId, sProjectName)
+                dChange = self.oApiClient.getChangeData(sChangeId, sProjectName)
 
                 assert dChange is not None
                 assert dChange["id"] == "%s~master~%s" % (quote(sProjectName, safe=""), sChangeId)

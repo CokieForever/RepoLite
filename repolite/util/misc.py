@@ -27,6 +27,7 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
+import ctypes
 import os
 import signal
 import threading
@@ -39,6 +40,19 @@ class FatalError(ValueError):
 
 def strOrDefault(sString, sDefault):
     return sString if sString else sDefault
+
+
+def hideFile(sFile):
+    if os.name == "nt":
+        INVALID_FILE_ATTRIBUTES = -1
+        FILE_ATTRIBUTE_HIDDEN = 2
+        oKernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        iAttributes = oKernel32.GetFileAttributesW(sFile)
+        if iAttributes == INVALID_FILE_ATTRIBUTES:
+            raise ctypes.WinError(ctypes.get_last_error())
+        iAttributes |= FILE_ATTRIBUTE_HIDDEN
+        if not oKernel32.SetFileAttributesW(sFile, iAttributes):
+            raise FatalError(ctypes.get_last_error())
 
 
 @contextmanager

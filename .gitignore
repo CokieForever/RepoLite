@@ -8,3 +8,4 @@ __pycache__
 /build
 /repolite/tests/repo
 /MANIFEST
+/repolite/tests/res/repolite
