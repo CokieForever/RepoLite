@@ -186,7 +186,7 @@ class TestRepo(TestBase):
         lOutputLines = list(filter(bool, sOutput.splitlines()))
         lExpectedOutputLines = []
         for sProjectFolder in self.dProjectFolders:
-            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "WARN: Nothing to push", "Done"]
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "WARN: No new changes", "Done"]
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
@@ -222,6 +222,94 @@ class TestRepo(TestBase):
                 assert dJson[0]["current_revision"] != sLastCommit
             else:
                 assert dJson[0]["current_revision"] == sLastCommit
+
+    def test_repoPush_multipleTopics(self):
+        self.runRepo(["start", "topic_2"])
+        self.runRepo(["start", "topic_1"])
+        self.createCommit(sId="1")
+        self.runRepo(["switch", "topic_2"])
+        self.createCommit(sId="2")
+
+        self.push()
+        self.runRepo(["switch", "topic_1"])
+        self.push()
+
+        for iIdx, (sProjectFolder, sProjectName) in enumerate(self.dProjectFolders.items()):
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 2
+            for dData in dJson:
+                assert dData["project"] == sProjectName
+                assert len(dData["revisions"]) == 1
+
+    def test_repoPull(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.push()
+        dCommits = self.createChange(bAmend=True)
+
+        self.runRepo(["pull"])
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenAlreadyUpToDate(self):
+        self.runRepo(["start", "topic"])
+        dCommits = self.createCommit()
+        self.runRepo(["push"])
+
+        sOutput = self.runRepo(["pull"], capture_output=True, encoding="utf-8").stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "Already up-to-date.", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenAhead(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.runRepo(["push"])
+        dCommits = self.createCommit(bAmend=True)
+
+        sOutput = self.runRepo(["pull"], capture_output=True, encoding="utf-8").stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder),
+                                     "You are ahead of Gerrit.", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenConflict(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.runRepo(["push"])
+        self.createChange(bAmend=True)
+        dCommits = self.createCommit(bAmend=True)
+
+        oProcess = self.runRepo(["pull"], capture_output=True, encoding="utf-8", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            sName = os.path.basename(sProjectFolder)
+            lExpectedOutputLines += ["### %s ###" % sName,
+                                     "ERROR: [%s] You have local commits unknown to Gerrit" % sName]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
 
     def test_repoDownload_rebase(self):
         self.runRepo(["start", "topic_2"])

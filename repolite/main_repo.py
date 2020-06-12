@@ -29,6 +29,7 @@ __license__ = "MIT"
 
 import argparse
 import inspect
+import json
 import os
 import shlex
 import subprocess
@@ -51,6 +52,31 @@ def KeepInvalid(xFunction):
 def ForAll(xFunction):
     xFunction.bForAll = True
     return xFunction
+
+
+class RepoData:
+    def __init__(self):
+        self.dRaw = {}
+
+    def load(self, sFile):
+        try:
+            with open(sFile, "r") as oFile:
+                self.dRaw = json.load(oFile)
+        except (ValueError, OSError) as e:
+            raise FatalError(e)
+
+    def save(self, sFile):
+        try:
+            with open(sFile, "w") as oFile:
+                json.dump(self.dRaw, oFile)
+        except (ValueError, OSError) as e:
+            raise FatalError(e)
+
+    def getLastPushedCommit(self, sProject, sChangeId):
+        return self.dRaw.get(sProject, {}).get(sChangeId, {}).get("last-pushed-commit")
+
+    def setLastPushedCommit(self, sProject, sChangeId, sCommit):
+        self.dRaw.setdefault(sProject, {}).setdefault(sChangeId, {})["last-pushed-commit"] = sCommit
 
 
 class RepoLite:
@@ -145,25 +171,16 @@ class RepoLite:
         return dRepos
 
     def getRepoData(self):
-        oRepoData = ConfigParser()
+        oRepoData = RepoData()
         if os.path.isfile(self.sRepoDataFile):
-            oRepoData.read(self.sRepoDataFile)
-        lSections = oRepoData.sections()
-        for sProjectUrl in self.readManifest(bKeepInvalid=False):
-            sProjectName = gerrit.getProjectName(sUrl=sProjectUrl)
-            if sProjectName not in lSections:
-                oRepoData.add_section(sProjectName)
+            oRepoData.load(self.sRepoDataFile)
         return oRepoData
 
     def saveRepoData(self, oRepoData):
-        sFolder = os.path.dirname(self.sRepoDataFile)
-        try:
-            os.makedirs(sFolder, exist_ok=True)
-            hideFile(sFolder)
-            with open(self.sRepoDataFile, "w") as oFile:
-                oRepoData.write(oFile)
-        except OSError as e:
-            raise FatalError(e)
+        sDir = os.path.dirname(self.sRepoDataFile)
+        os.makedirs(sDir, exist_ok=True)
+        hideFile(sDir)
+        oRepoData.save(self.sRepoDataFile)
 
     @KeepInvalid
     def SYNC(self, sRepoUrl):
@@ -225,12 +242,46 @@ class RepoLite:
 
         return []
 
+    def PULL(self, sRepoUrl):
+        sChangeId = gerrit.getChangeId()
+        if not sChangeId:
+            raise FatalError("Unable to extract Change-Id")
+        sProject = gerrit.getProjectName()
+        try:
+            dChangeData = self.getApiClient().getChangeData(sChangeId, sProject, lAdditionalData=["ALL_REVISIONS"])
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                warning("No remote patch")
+                return
+            raise e
+        sRemoteCommit = dChangeData["current_revision"]
+        sLocalCommit = git.getLastCommit()
+        sLastPushedCommit = self.getRepoData().getLastPushedCommit(sProject, sChangeId)
+        if sRemoteCommit == sLocalCommit:
+            print("Already up-to-date.")
+            return
+        elif sRemoteCommit == sLastPushedCommit:
+            print("You are ahead of Gerrit.")
+            return
+        elif sLocalCommit in dChangeData["revisions"]:
+            print("Pulling changes from %s" % sRepoUrl)
+            sBranch = git.getCurrentBranch()
+            dFetchData = dChangeData["revisions"][sRemoteCommit]["fetch"]["ssh"]
+            subprocess.run(["git", "fetch", dFetchData["url"], dFetchData["ref"]], check=True)
+            subprocess.run(["git", "checkout", "FETCH_HEAD"], check=True)
+            if sBranch:
+                subprocess.run(["git", "branch", "-D", sBranch], check=True)
+                subprocess.run(["git", "checkout", "-b", sBranch], check=True)
+        else:
+            raise FatalError("You have local commits unknown to Gerrit")
+
     def PUSH(self, sRepoUrl):
         sChangeId = gerrit.getChangeId()
         if not sChangeId:
             raise FatalError("Unable to extract Change-Id")
         sProject = gerrit.getProjectName()
         oRepoData = self.getRepoData()
+        sLocalCommit = git.getLastCommit()
         try:
             dChangeData = self.getApiClient().getChangeData(sChangeId, sProject, lAdditionalData=["CURRENT_REVISION"])
         except requests.HTTPError as e:
@@ -238,17 +289,18 @@ class RepoLite:
                 raise
         else:
             sRemoteCommit = dChangeData["current_revision"]
-            if sRemoteCommit == git.getLastCommit():
-                warning("Nothing to push")
+            sLastPushedCommit = oRepoData.getLastPushedCommit(sProject, sChangeId)
+            if sRemoteCommit == sLocalCommit:
+                warning("No new changes")
                 return
-            elif sRemoteCommit != oRepoData.get(sProject, "push", fallback=None):
+            elif sRemoteCommit != sLastPushedCommit:
                 warning("You are about to overwrite unknown changes.")
                 sInput = input("Continue? (y/n): ")
                 if sInput != "y":
                     raise FatalError("Operation aborted")
         print("Pushing changes to %s" % sRepoUrl)
         gerrit.push()
-        oRepoData.set(sProject, "push", git.getLastCommit())
+        oRepoData.setLastPushedCommit(sProject, sChangeId, sLocalCommit)
         self.saveRepoData(oRepoData)
 
     def DOWNLOAD(self, sRepoUrl):
@@ -324,6 +376,8 @@ def parseArgs():
     oSubparsers.add_parser("topic", help="Show current topics")
 
     oSubparsers.add_parser("push", help="Push all repos")
+
+    oSubparsers.add_parser("pull", help="Pull all repos")
 
     oDownloadParser = oSubparsers.add_parser("download", help="Download a patch and rebase on it")
     oDownloadParser.add_argument("repo", help="Patch repository")

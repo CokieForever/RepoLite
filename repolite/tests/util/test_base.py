@@ -36,9 +36,10 @@ from urllib.parse import urlparse, quote_plus
 
 from repolite.tests.util.test_setup import Setup, getExecutablePath, configureGit, withRetry, removeFolder
 from repolite.util.misc import changeWorkingDir
-
-
 # noinspection PyAttributeOutsideInit
+from repolite.vcs import git, gerrit
+
+
 class TestBase:
     oTestSetup = Setup()
 
@@ -117,7 +118,8 @@ class TestBase:
         return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
 
     def createCommit(self, sId="1", bAmend=False):
-        for sProjectFolder in self.dProjectFolders:
+        dCommits = {}
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
             with changeWorkingDir(sProjectFolder):
                 sTestFileName = "test_%s.txt" % sId
                 with open(sTestFileName, "w") as oFile:
@@ -132,13 +134,32 @@ class TestBase:
                     self.runGit(["commit", "--amend", "-m", sNewCommitMsg])
                 else:
                     self.runGit(["commit", "-m", "Test commit (%s)" % sId])
+                dCommits[sProjectName] = git.getLastCommit()
+        return dCommits
+
+    def createChange(self, sId="1", bAmend=False):
+        dCommits = {}
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                if bAmend:
+                    sChangeId = gerrit.getChangeId()
+                    dJson = {"message": "Amended test commit (%s)" % sId}
+                    self.oApiClient.put("changes/%s~master~%s/message"
+                                        % (quote_plus(sProjectName), sChangeId), json=dJson)
+                else:
+                    dJson = {"project": sProjectName, "branch": "master", "subject": "Test commit (%s)" % sId}
+                    sChangeId = self.oApiClient.post("changes/", json=dJson)["change_id"]
+                dJson = self.oApiClient.getChangeData(sChangeId, sProjectName, lAdditionalData=["CURRENT_REVISION"])
+                dCommits[sProjectName] = dJson["current_revision"]
+        return dCommits
 
     def push(self):
         self.runRepo(["push"])
         lChangeNumbers = []
         for sProjectFolder, sProjectName in self.dProjectFolders.items():
-            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
-            lChangeNumbers.append(dJson[0]["_number"])
+            with changeWorkingDir(sProjectFolder):
+                dJson = self.oApiClient.getChangeData(gerrit.getChangeId(), sProjectName)
+                lChangeNumbers.append(dJson["_number"])
         return lChangeNumbers
 
     def merge(self, iChangeNumber):
