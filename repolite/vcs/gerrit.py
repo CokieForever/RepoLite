@@ -36,7 +36,6 @@ from urllib.parse import urlparse, unquote, quote
 
 import requests
 
-from repolite.util.misc import FatalError
 from repolite.vcs import git
 
 
@@ -85,15 +84,9 @@ def push(sTopic=None, sTargetBranch="master"):
     subprocess.run(lArgs, check=True)
 
 
-def download(sPatch, bDetach=False):
-    oMatch = re.match(r"(\d+)/\d+", sPatch)
-    if oMatch is None:
-        raise FatalError("%s is not a valid patch ID" % sPatch)
-    sPatchChecksum = "%02d" % int(oMatch.group(1)[-2:])
-
+def download(sPatchRef, bDetach=False):
     sRemote = git.getFirstRemote()
-    subprocess.run(["git", "fetch", sRemote, "refs/changes/%s/%s" % (sPatchChecksum, sPatch)],
-                   check=True)
+    subprocess.run(["git", "fetch", sRemote, sPatchRef], check=True)
     if bDetach:
         subprocess.run(["git", "checkout", "FETCH_HEAD", "--detach"], check=True)
     else:

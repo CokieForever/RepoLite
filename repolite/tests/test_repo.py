@@ -31,9 +31,11 @@ import os
 import re
 from urllib.parse import quote_plus
 
+import pytest
+
 from repolite.tests.util.test_base import TestBase
 from repolite.util.misc import changeWorkingDir
-from repolite.vcs import git
+from repolite.vcs import git, gerrit
 
 INITIAL_COMMIT_MSG = "Initial empty repository"
 
@@ -311,34 +313,80 @@ class TestRepo(TestBase):
             with changeWorkingDir(sProjectFolder):
                 assert dCommits[sProjectName] == git.getLastCommit()
 
-    def test_repoDownload_rebase(self):
+    def repoDownloadTestSetup(self):
         self.runRepo(["start", "topic_2"])
         self.runRepo(["start", "topic_1"])
         self.createCommit(sId="1")
+        self.push()
+        self.createCommit(sId="1", bAmend=True)
         iChangeNumber = self.push()[0]
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            sChangeId = gerrit.getChangeId()
         self.runRepo(["switch", "topic_2"])
         self.createCommit(sId="2")
+        return iChangeNumber, sChangeId
 
-        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
-
+    def repoDownloadTestAssertResult(self, iPatch):
         for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
             with changeWorkingDir(sProjectFolder):
                 assert git.getCurrentBranch() == "topic_2"
                 assert os.path.isfile("test_2.txt")
                 if iIdx == 0:
                     assert os.path.isfile("test_1.txt")
-                    assert git.getGitMessages() == ["Test commit (2)", "Test commit (1)", INITIAL_COMMIT_MSG]
+                    if iPatch == 1:
+                        assert git.getGitMessages() == ["Test commit (2)", "Test commit (1)", INITIAL_COMMIT_MSG]
+                    elif iPatch == 2:
+                        assert git.getGitMessages() == ["Test commit (2)", "Amended test commit (1)",
+                                                        INITIAL_COMMIT_MSG]
+                    else:
+                        pytest.fail("iPatch parameter must be 1 or 2, received %d" % iPatch)
                 else:
                     assert not os.path.isfile("test_1.txt")
                     assert git.getGitMessages() == ["Test commit (2)", INITIAL_COMMIT_MSG]
 
+    def test_repoDownload_rebase_project_changeNumber_patchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_project_changeId_patchNumber(self):
+        _, sChangeId = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%s/1" % sChangeId])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_wrongProject(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        oProcess = self.runRepo(["download", "foobar", "%d/1" % iChangeNumber], check=False)
+        assert oProcess.returncode != 0
+
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert os.path.isfile("test_2.txt")
+                assert not os.path.isfile("test_1.txt")
+                assert git.getGitMessages() == ["Test commit (2)", INITIAL_COMMIT_MSG]
+
+    def test_repoDownload_rebase_noProject_changeNumber_patchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", "%d/1" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_noProject_changeNumber_noPatchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", "%d" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=2)
+
     def test_repoDownload_detach(self):
-        self.runRepo(["start", "topic_2"])
-        self.runRepo(["start", "topic_1"])
-        self.createCommit(sId="1")
-        iChangeNumber = self.push()[0]
-        self.runRepo(["switch", "topic_2"])
-        self.createCommit(sId="2")
+        iChangeNumber, _ = self.repoDownloadTestSetup()
 
         self.runRepo(["download", "-d", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
 

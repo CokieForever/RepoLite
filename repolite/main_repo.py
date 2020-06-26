@@ -126,23 +126,25 @@ class RepoLite:
             return xFunction(dRepos)
         else:
             def doCallFunction(sRepoUrl):
-                highlight("\n### %s ###" % os.path.basename(os.getcwd()))
                 if len(inspect.getfullargspec(xFunction)[0]) > 1:
                     xFunction(sRepoUrl)
                 else:
                     xFunction()
-                success("Done")
 
             return self.runInRepos(dRepos, doCallFunction)
 
-    def runInRepos(self, dRepos, xFunction):
+    def runInRepos(self, dRepos, xFunction, bPrint=True):
         lErrorRepos = []
         for sRepoUrl, sDirPath in dRepos.items():
             sRepoName = os.path.basename(sDirPath)
             try:
                 os.makedirs(sDirPath, exist_ok=True)
                 with changeWorkingDir(sDirPath):
+                    if bPrint:
+                        highlight("\n### %s ###" % os.path.basename(os.getcwd()))
                     xFunction(sRepoUrl)
+                    if bPrint:
+                        success("Done")
             except (subprocess.CalledProcessError, FatalError, OSError) as e:
                 error("[%s] %s" % (sRepoName, e))
                 lErrorRepos.append(sDirPath)
@@ -226,7 +228,7 @@ class RepoLite:
             sRepoName = os.path.basename(os.getcwd())
             dTopics[sRepoName] = strOrDefault(git.getCurrentBranch(), "(none)")
 
-        lErrorRepos = self.runInRepos(dRepos, lambda _: topic())
+        lErrorRepos = self.runInRepos(dRepos, lambda _: topic(), bPrint=False)
         if lErrorRepos:
             return lErrorRepos
 
@@ -303,12 +305,51 @@ class RepoLite:
         oRepoData.setLastPushedCommit(sProject, sChangeId, sLocalCommit)
         self.saveRepoData(oRepoData)
 
-    def DOWNLOAD(self, sRepoUrl):
-        if self.oArgs.repo == urlparse(sRepoUrl, allow_fragments=True).path[1:]:
-            print("Downloading patch %s from %s" % (self.oArgs.patch, sRepoUrl))
-            gerrit.download(self.oArgs.patch, bDetach=self.oArgs.detach)
+    @ForAll
+    def DOWNLOAD(self, dRepos):
+        bFound = False
+
+        def download(sRepoUrl):
+            nonlocal bFound
+            sPatchRef = self.getPatchRef(sRepoUrl, self.oArgs.change)
+            if sPatchRef:
+                print("Downloading change %s from %s" % (self.oArgs.change, sRepoUrl))
+                gerrit.download(sPatchRef, bDetach=self.oArgs.detach)
+                bFound = True
+            else:
+                sErrMsg = "Change %s not found within this project" % self.oArgs.change
+                if self.oArgs.project:
+                    raise FatalError(sErrMsg)
+                else:
+                    print("Skipped: %s" % sErrMsg)
+
+        dFilteredRepos = {
+            sRepoUrl: sDirPath
+            for sRepoUrl, sDirPath in dRepos.items()
+            if not self.oArgs.project or self.oArgs.project == urlparse(sRepoUrl, allow_fragments=True).path[1:]
+        }
+        if not dFilteredRepos:
+            raise FatalError("No project \"%s\" found." % self.oArgs.project)
+
+        lErrorRepos = self.runInRepos(dFilteredRepos, download)
+        if not lErrorRepos and not bFound:
+            raise FatalError("Change %s was not found in any project." % self.oArgs.change)
+        return lErrorRepos
+
+    def getPatchRef(self, sRepoUrl, sId):
+        if "/" in sId:
+            sId, sNumber = sId.split("/", maxsplit=1)
+            sRequest = "ALL_REVISIONS"
         else:
-            print("Skipped")
+            sNumber = None
+            sRequest = "CURRENT_REVISION"
+        oApiClient = self.getApiClient()
+        for dChangeData in oApiClient.get("changes/?q=change:%s&o=%s" % (sId, sRequest)):
+            for dRevisionData in dChangeData["revisions"].values():
+                if sNumber is None or str(dRevisionData["_number"]) == sNumber:
+                    for dFetchData in dRevisionData["fetch"].values():
+                        if sRepoUrl == dFetchData["url"]:
+                            return dFetchData["ref"]
 
     def REBASE(self):
         print("Rebasing current state on %s" % self.oArgs.topic)
@@ -380,8 +421,8 @@ def parseArgs():
     oSubparsers.add_parser("pull", help="Pull all repos")
 
     oDownloadParser = oSubparsers.add_parser("download", help="Download a patch and rebase on it")
-    oDownloadParser.add_argument("repo", help="Patch repository")
-    oDownloadParser.add_argument("patch", help="Patch ID")
+    oDownloadParser.add_argument("project", help="Project name", nargs="?")
+    oDownloadParser.add_argument("change", help="Change or patch ID, possibly with version specifier")
     oDownloadParser.add_argument("-d", "--detach", help="Detaches HEAD instead of rebasing", action="store_true")
 
     oRebaseParser = oSubparsers.add_parser("rebase", help="Rebase the current topic on another (local) one")
