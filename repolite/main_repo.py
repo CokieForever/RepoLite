@@ -133,7 +133,24 @@ class RepoLite:
 
             return self.runInRepos(dRepos, doCallFunction)
 
-    def runInRepos(self, dRepos, xFunction, bPrint=True):
+    def runInRepos(self, dRepos, xFunction, bPrint=True, bCheckTopic=True):
+        if bCheckTopic:
+            lBranches = set()
+            try:
+                for sDirPath in dRepos.values():
+                    if os.path.isdir(sDirPath):
+                        with changeWorkingDir(sDirPath):
+                            lBranches.add(strOrDefault(git.getCurrentBranch(), "(none)"))
+            except (subprocess.CalledProcessError, OSError) as e:
+                raise FatalError(e)
+
+            if len(lBranches) > 1:
+                warning("Topic is not consistent across your repositories. "
+                        "Found following topics: %s" % ", ".join(lBranches))
+                sInput = input("Do you wish to proceed anyway? (y/n): ")
+                if sInput != "y":
+                    raise FatalError("Operation cancelled")
+
         lErrorRepos = []
         for sRepoUrl, sDirPath in dRepos.items():
             sRepoName = os.path.basename(sDirPath)
@@ -228,7 +245,7 @@ class RepoLite:
             sRepoName = os.path.basename(os.getcwd())
             dTopics[sRepoName] = strOrDefault(git.getCurrentBranch(), "(none)")
 
-        lErrorRepos = self.runInRepos(dRepos, lambda _: topic(), bPrint=False)
+        lErrorRepos = self.runInRepos(dRepos, lambda _: topic(), bPrint=False, bCheckTopic=False)
         if lErrorRepos:
             return lErrorRepos
 
@@ -236,10 +253,12 @@ class RepoLite:
         if len(lTopics) == 1:
             print(oTerminal.green(lTopics[0]))
         else:
-            iMaxLen = max(len(s) for s in lTopics)
+            iMaxTopicLen = max(len(s) for s in lTopics)
+            iMaxRepoLen = max(len(s) for s in dTopics)
             sMainTopic = Counter(dTopics.values()).most_common(1)[0][0]
             for sRepoName, sTopic in dTopics.items():
-                print("%s %s %s" % (sRepoName, "".join(["."] * (iMaxLen - len(sTopic) + 4)),
+                sDots = "".join(["."] * (iMaxTopicLen - len(sTopic) + iMaxRepoLen - len(sRepoName) + 4))
+                print("%s %s %s" % (sRepoName, sDots,
                                     oTerminal.green(sTopic) if sTopic == sMainTopic else oTerminal.red(sTopic)))
 
         return []

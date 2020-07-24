@@ -31,9 +31,9 @@ import argparse
 import re
 import subprocess
 
-from repolite.vcs import gerrit
 from repolite.util.log import fatalError
 from repolite.util.misc import FatalError
+from repolite.vcs import gerrit
 
 
 class Gerrit:

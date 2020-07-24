@@ -153,8 +153,9 @@ class TestRepo(TestBase):
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s ........ (none)" % os.path.basename(s) for s in self.dProjectFolders]
-        lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(next(iter(self.dProjectFolders)))
+        lExpectedOutputLines = ["Project1 ........ topic_test",
+                                "Project2 ............ (none)",
+                                "sub_Project3 ........ (none)"]
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
     def test_repoPush_newChange(self):
@@ -242,6 +243,29 @@ class TestRepo(TestBase):
             for dData in dJson:
                 assert dData["project"] == sProjectName
                 assert len(dData["revisions"]) == 1
+
+    def test_repoPush_whenInconsistentTopics(self):
+        self.runRepo(["start", "topic_1"])
+        self.createCommit()
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            self.runGit(["checkout", "-b", "topic_2"])
+
+        oProcess = self.runRepo(["push"], input="n", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        lExpectedOutputLines1 = ["WARN: Topic is not consistent across your repositories. "
+                                 "Found following topics: topic_1, topic_2",
+                                 "Do you wish to proceed anyway? (y/n): ", "ERROR: Operation cancelled"]
+        lExpectedOutputLines2 = ["WARN: Topic is not consistent across your repositories. "
+                                 "Found following topics: topic_2, topic_1",
+                                 "Do you wish to proceed anyway? (y/n): ", "ERROR: Operation cancelled"]
+        assert lOutputLines[:len(lExpectedOutputLines1)] == lExpectedOutputLines1 \
+               or lOutputLines[:len(lExpectedOutputLines2)] == lExpectedOutputLines2
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 0
 
     def test_repoPull(self):
         self.runRepo(["start", "topic"])
