@@ -28,11 +28,12 @@ __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
 import argparse
+import re
 import subprocess
 
-from repolite.vcs import gerrit
 from repolite.util.log import fatalError
 from repolite.util.misc import FatalError
+from repolite.vcs import gerrit
 
 
 class Gerrit:
@@ -52,7 +53,11 @@ class Gerrit:
         gerrit.push(sTopic=self.oArgs.topic, sTargetBranch=self.oArgs.branch)
 
     def DOWNLOAD(self):
-        gerrit.download(self.oArgs.patch, bDetach=self.oArgs.detach)
+        oMatch = re.match(r"(\d+)/\d+", self.oArgs.patch)
+        if oMatch is None:
+            raise FatalError("%s is not a valid patch ID" % self.oArgs.patch)
+        sPatchChecksum = "%02d" % int(oMatch.group(1)[-2:])
+        gerrit.download("refs/changes/%s/%s" % (sPatchChecksum, self.oArgs.patch), bDetach=self.oArgs.detach)
 
     def REBASE(self):
         gerrit.rebase(self.oArgs.branch)

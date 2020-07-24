@@ -29,149 +29,45 @@ __license__ = "MIT"
 
 import os
 import re
-import shlex
-import subprocess
-import sys
+from urllib.parse import quote_plus
 
-import requests
+import pytest
 
-from repolite.tests.util.test_setup import Setup, removeFolder, withRetry, getExecutablePath, configureGit
+from repolite.tests.util.test_base import TestBase
+from repolite.util.misc import changeWorkingDir
+from repolite.vcs import git, gerrit
 
 INITIAL_COMMIT_MSG = "Initial empty repository"
 
 
-# noinspection PyAttributeOutsideInit
-class TestRepo:
-    oTestSetup = Setup()
-
-    @classmethod
-    def setup_class(cls):
-        try:
-            cls.oTestSetup.setup()
-        except:  # noqa: E722
-            cls.teardown_class()
-            raise
-
-    @classmethod
-    def teardown_class(cls):
-        cls.oTestSetup.teardown()
-
-    def setup_method(self, _):
-        self.sRepoFolder = os.path.join(os.path.abspath(os.path.dirname(__file__)), "repo")
-        self.cleanRepoFolder()
-        self.runRepo(["sync"])
-        self.lProjectFolders = [os.path.join(self.sRepoFolder, sUrl.split("/")[-1])
-                                for sUrl in self.oTestSetup.lProjectUrls]
-        dJson = self.oTestSetup.oGerritClient.get("config/server/info", bGetJson=True)
-        sGetMsgHookCommand = dJson["download"]["schemes"]["ssh"]["clone_commands"]["Clone with commit-msg hook"] \
-            .split("&&")[1].strip()
-        if os.name == "nt":
-            sScpExe = getExecutablePath("scp.exe")
-            if sScpExe:
-                sGetMsgHookCommand = sGetMsgHookCommand.replace("scp", '"%s"' % sScpExe)
-        for sProjectFolder in self.lProjectFolders:
-            configureGit(sProjectFolder)
-            sProjectName = os.path.basename(sProjectFolder)
-            subprocess.run(shlex.split(sGetMsgHookCommand.replace("${project-base-name}", sProjectName)),
-                           check=True, cwd=os.path.dirname(sProjectFolder))
-
-    def teardown_method(self, _):
-        self.oTestSetup.resetProjects()
-
-    def cleanRepoFolder(self):
-        withRetry(lambda: removeFolder(self.sRepoFolder))
-        withRetry(lambda: os.makedirs(self.sRepoFolder))
-        with open(os.path.join(self.sRepoFolder, "manifest.txt"), "w") as oFile:
-            for sUrl in self.oTestSetup.lProjectUrls:
-                oFile.write(sUrl + "\n")
-
-    def runRepo(self, lArgs, **kwargs):
-        kwargs["cwd"] = self.sRepoFolder
-        if "check" not in kwargs:
-            kwargs["check"] = True
-        if "capture_output" not in kwargs:
-            kwargs["capture_output"] = True
-        if kwargs["capture_output"] and "encoding" not in kwargs:
-            kwargs["encoding"] = "utf-8"
-        dEnv = os.environ.copy()
-        dEnv["PYTHONPATH"] = os.pathsep.join(sys.path)
-        sRepoScript = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main_repo.py"))
-        return subprocess.run([sys.executable, sRepoScript] + lArgs, env=dEnv, **kwargs)
-
-    def runGit(self, lArgs, sCwd, **kwargs):
-        kwargs["cwd"] = sCwd
-        if "check" not in kwargs:
-            kwargs["check"] = True
-        if "capture_output" not in kwargs:
-            kwargs["capture_output"] = True
-        if kwargs["capture_output"] and "encoding" not in kwargs:
-            kwargs["encoding"] = "utf-8"
-        return subprocess.run(["git"] + lArgs, **kwargs)
-
-    def getCurrentBranch(self, sProjectFolder):
-        return self.runGit(["branch", "--show-current"], sProjectFolder).stdout.strip()
-
-    def getAllBranches(self, sProjectFolder):
-        return [s[2:] for s in self.runGit(["branch"], sProjectFolder).stdout.splitlines()]
-
-    def getGitMessages(self, sProjectFolder):
-        return self.runGit(["log", "--format=format:%s"], sProjectFolder).stdout.splitlines()
-
-    def createCommit(self, sId="1", bAmend=False):
-        for sProjectFolder in self.lProjectFolders:
-            sTestFileName = "test_%s.txt" % sId
-            with open(os.path.join(sProjectFolder, sTestFileName), "w") as oFile:
-                if bAmend:
-                    oFile.write("This is an amended test (%s)." % sId)
-                else:
-                    oFile.write("This is a test (%s)." % sId)
-            self.runGit(["add", sTestFileName], sProjectFolder)
-            if bAmend:
-                sLastCommitMsg = self.runGit(["log", "-1", "--format=format:%B"], sProjectFolder).stdout
-                sNewCommitMsg = "\n".join(["Amended test commit (%s)" % sId] + sLastCommitMsg.splitlines()[1:])
-                self.runGit(["commit", "--amend", "-m", sNewCommitMsg], sProjectFolder)
-            else:
-                self.runGit(["commit", "-m", "Test commit (%s)" % sId], sProjectFolder)
-
-    def push(self):
-        self.runRepo(["push"])
-        lChangeNumbers = []
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oTestSetup.oGerritClient.get("changes/?q=%s"
-                                                      % requests.utils.quote("p:%s" % sProjectName), bGetJson=True)
-            lChangeNumbers.append(dJson[0]["_number"])
-        return lChangeNumbers
-
-    def merge(self, iChangeNumber):
-        self.oTestSetup.oGerritClient.post("changes/%d/revisions/current/review" % iChangeNumber,
-                                           json={"labels": {"Code-Review": "+2"}})
-        self.oTestSetup.oGerritClient.post("changes/%d/submit" % iChangeNumber)
-
+class TestRepo(TestBase):
     def test_repoSync_checkout(self):
-        for sProjectFolder in self.lProjectFolders:
-            lBranches = self.getAllBranches(sProjectFolder)
-            assert len(lBranches) == 1
-            assert re.match(r"\(HEAD detached at .*\)", lBranches[0], re.IGNORECASE) is not None
-            assert self.getCurrentBranch(sProjectFolder) == ""
-            assert self.getGitMessages(sProjectFolder) == [INITIAL_COMMIT_MSG]
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                lBranches = git.getAllBranches()
+                assert len(lBranches) == 1
+                assert re.match(r"\(HEAD detached at .*\)", lBranches[0], re.IGNORECASE) is not None
+                assert git.getCurrentBranch() == ""
+                assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
 
     def test_repoStart_onDetached(self):
         self.runRepo(["start", "topic"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getCurrentBranch(sProjectFolder) == "topic"
-            assert self.getGitMessages(sProjectFolder) == [INITIAL_COMMIT_MSG]
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic"
+                assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
 
     def test_repoStart_onOtherTopic(self):
         self.runRepo(["start", "topic_1"])
         self.createCommit()
         self.runRepo(["start", "topic_2"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-            assert self.getGitMessages(sProjectFolder) == ["Test commit (1)", INITIAL_COMMIT_MSG]
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert git.getGitMessages() == ["Test commit (1)", INITIAL_COMMIT_MSG]
+                assert os.path.isfile("test_1.txt")
 
     def test_repoSync_detach(self):
         self.runRepo(["start", "topic"])
@@ -179,10 +75,11 @@ class TestRepo:
 
         self.runRepo(["sync", "-d"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getCurrentBranch(sProjectFolder) == ""
-            assert self.getGitMessages(sProjectFolder) == [INITIAL_COMMIT_MSG]
-            assert not os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == ""
+                assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
+                assert not os.path.isfile("test_1.txt")
 
     def test_repoSwitch(self):
         self.runRepo(["start", "topic_1"])
@@ -191,10 +88,11 @@ class TestRepo:
 
         self.runRepo(["switch", "topic_1"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getCurrentBranch(sProjectFolder) == "topic_1"
-            assert self.getGitMessages(sProjectFolder) == [INITIAL_COMMIT_MSG]
-            assert not os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_1"
+                assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
+                assert not os.path.isfile("test_1.txt")
 
     def test_repoSync_rebase(self):
         self.runRepo(["start", "topic_2"])
@@ -207,12 +105,12 @@ class TestRepo:
 
         self.runRepo(["sync"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-            assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", "Test commit (1)",
-                                                           INITIAL_COMMIT_MSG]
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert os.path.isfile("test_2.txt")
+                assert os.path.isfile("test_1.txt")
+                assert git.getGitMessages() == ["Test commit (2)", "Test commit (1)", INITIAL_COMMIT_MSG]
 
     def test_repoEnd_whenActive(self):
         self.runRepo(["start", "topic"])
@@ -220,13 +118,14 @@ class TestRepo:
 
         self.runRepo(["end", "topic"])
 
-        for sProjectFolder in self.lProjectFolders:
-            lBranches = self.getAllBranches(sProjectFolder)
-            assert len(lBranches) == 1
-            assert re.match(r"\(HEAD detached at .*\)", lBranches[0], re.IGNORECASE) is not None
-            assert self.getCurrentBranch(sProjectFolder) == ""
-            assert self.getGitMessages(sProjectFolder) == [INITIAL_COMMIT_MSG]
-            assert not os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                lBranches = git.getAllBranches()
+                assert len(lBranches) == 1
+                assert re.match(r"\(HEAD detached at .*\)", lBranches[0], re.IGNORECASE) is not None
+                assert git.getCurrentBranch() == ""
+                assert git.getGitMessages() == [INITIAL_COMMIT_MSG]
+                assert not os.path.isfile("test_1.txt")
 
     def test_repoEnd_whenNotActive(self):
         self.runRepo(["start", "topic_1"])
@@ -234,9 +133,10 @@ class TestRepo:
 
         self.runRepo(["end", "topic_1"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getAllBranches(sProjectFolder) == ["topic_2"]
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getAllBranches() == ["topic_2"]
+                assert git.getCurrentBranch() == "topic_2"
 
     def test_repoTopic(self):
         self.runRepo(["start", "topic_test"])
@@ -247,83 +147,285 @@ class TestRepo:
         assert lOutputLines[0] == "topic_test"
 
     def test_repoTopic_whenMultipleTopic(self):
-        self.runGit(["checkout", "-b", "topic_test"], self.lProjectFolders[0])
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            self.runGit(["checkout", "-b", "topic_test"])
+
         sOutput = self.runRepo(["topic"]).stdout
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
-        lExpectedOutputLines = ["%s ........ (none)" % os.path.basename(s) for s in self.lProjectFolders]
-        lExpectedOutputLines[0] = "%s .... topic_test" % os.path.basename(self.lProjectFolders[0])
+        lExpectedOutputLines = ["Project1 ........ topic_test",
+                                "Project2 ............ (none)",
+                                "sub_Project3 ........ (none)"]
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
 
-    def test_repoPush(self):
+    def test_repoPush_newChange(self):
         self.runRepo(["start", "topic"])
         self.createCommit()
 
         self.push()
 
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oTestSetup.oGerritClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName),
-                                                      bGetJson=True)
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
             assert len(dJson) == 1
             assert dJson[0]["project"] == sProjectName
 
-    def test_repoPush_crossrepo(self):
-        self.runRepo(["start", "crossrepo/topic"])
-        self.createCommit()
+    def test_repoPush_updateChange(self):
+        self.test_repoPush_newChange()
+        self.createCommit(bAmend=True)
 
+        self.push()
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 1
+            assert dJson[0]["project"] == sProjectName
+            assert len(dJson[0]["revisions"]) == 2
+
+    def test_repoPush_whenNoNewChange(self):
+        self.test_repoPush_newChange()
+
+        sOutput = self.runRepo(["push"]).stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "WARN: No new changes", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 1
+            assert dJson[0]["project"] == sProjectName
+            assert len(dJson[0]["revisions"]) == 1
+
+    def test_repoPush_whenRemoteUpdated(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        iChangeNumber = self.push()[0]
+        self.oApiClient.put("changes/%d/message" % iChangeNumber, json={"message": "Updated!"})
+        self.createCommit(bAmend=True)
+
+        oProcess = self.runRepo(["push"], input="n", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        sName = os.path.basename(next(iter(self.dProjectFolders)))
+        lExpectedOutputLines = ["### %s ###" % sName, "WARN: You are about to overwrite unknown changes.",
+                                "Continue? (y/n): ERROR: [%s] Operation aborted" % sName]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for iIdx, (sProjectFolder, sProjectName) in enumerate(self.dProjectFolders.items()):
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 1
+            assert dJson[0]["project"] == sProjectName
+            assert len(dJson[0]["revisions"]) == 2
+            with changeWorkingDir(sProjectFolder):
+                sLastCommit = git.getLastCommit()
+            if iIdx == 0:
+                assert dJson[0]["current_revision"] != sLastCommit
+            else:
+                assert dJson[0]["current_revision"] == sLastCommit
+
+    def test_repoPush_multipleTopics(self):
+        self.runRepo(["start", "topic_2"])
+        self.runRepo(["start", "topic_1"])
+        self.createCommit(sId="1")
+        self.runRepo(["switch", "topic_2"])
+        self.createCommit(sId="2")
+
+        self.push()
+        self.runRepo(["switch", "topic_1"])
+        self.push()
+
+        for iIdx, (sProjectFolder, sProjectName) in enumerate(self.dProjectFolders.items()):
+            dJson = self.oApiClient.get("changes/?q=%s&o=ALL_REVISIONS" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 2
+            for dData in dJson:
+                assert dData["project"] == sProjectName
+                assert len(dData["revisions"]) == 1
+
+    def test_repoPush_whenInconsistentTopics(self):
+        self.runRepo(["start", "topic_1"])
+        self.createCommit()
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            self.runGit(["checkout", "-b", "topic_2"])
+
+        oProcess = self.runRepo(["push"], input="n", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        lExpectedOutputLines1 = ["WARN: Topic is not consistent across your repositories. "
+                                 "Found following topics: topic_1, topic_2",
+                                 "Do you wish to proceed anyway? (y/n): ", "ERROR: Operation cancelled"]
+        lExpectedOutputLines2 = ["WARN: Topic is not consistent across your repositories. "
+                                 "Found following topics: topic_2, topic_1",
+                                 "Do you wish to proceed anyway? (y/n): ", "ERROR: Operation cancelled"]
+        assert lOutputLines[:len(lExpectedOutputLines1)] == lExpectedOutputLines1 \
+               or lOutputLines[:len(lExpectedOutputLines2)] == lExpectedOutputLines2
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            dJson = self.oApiClient.get("changes/?q=%s" % quote_plus("p:%s" % sProjectName))
+            assert len(dJson) == 0
+
+    def test_repoPull(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.push()
+        dCommits = self.createChange(bAmend=True)
+
+        self.runRepo(["pull"])
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenAlreadyUpToDate(self):
+        self.runRepo(["start", "topic"])
+        dCommits = self.createCommit()
         self.runRepo(["push"])
 
-        for sProjectFolder in self.lProjectFolders:
-            sProjectName = os.path.basename(sProjectFolder)
-            dJson = self.oTestSetup.oGerritClient.get("changes/?q=%s" % requests.utils.quote("p:%s" % sProjectName),
-                                                      bGetJson=True)
-            assert len(dJson) == 1
-            assert dJson[0]["project"] == sProjectName
-            assert dJson[0]["topic"] == "crossrepo/topic"
+        sOutput = self.runRepo(["pull"], capture_output=True, encoding="utf-8").stdout
 
-    def test_repoDownload_rebase(self):
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder), "Already up-to-date.", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenAhead(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.runRepo(["push"])
+        dCommits = self.createCommit(bAmend=True)
+
+        sOutput = self.runRepo(["pull"], capture_output=True, encoding="utf-8").stdout
+
+        lOutputLines = list(filter(bool, sOutput.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder),
+                                     "You are ahead of Gerrit.", "Done"]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def test_repoPull_whenConflict(self):
+        self.runRepo(["start", "topic"])
+        self.createCommit()
+        self.runRepo(["push"])
+        self.createChange(bAmend=True)
+        dCommits = self.createCommit(bAmend=True)
+
+        oProcess = self.runRepo(["pull"], capture_output=True, encoding="utf-8", check=False)
+        assert oProcess.returncode != 0
+
+        lOutputLines = list(filter(bool, oProcess.stdout.splitlines()))
+        lExpectedOutputLines = []
+        for sProjectFolder in self.dProjectFolders:
+            sName = os.path.basename(sProjectFolder)
+            lExpectedOutputLines += ["### %s ###" % sName,
+                                     "ERROR: [%s] You have local commits unknown to Gerrit" % sName]
+        assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines
+
+        for sProjectFolder, sProjectName in self.dProjectFolders.items():
+            with changeWorkingDir(sProjectFolder):
+                assert dCommits[sProjectName] == git.getLastCommit()
+
+    def repoDownloadTestSetup(self):
         self.runRepo(["start", "topic_2"])
         self.runRepo(["start", "topic_1"])
         self.createCommit(sId="1")
+        self.push()
+        self.createCommit(sId="1", bAmend=True)
         iChangeNumber = self.push()[0]
+        with changeWorkingDir(next(iter(self.dProjectFolders))):
+            sChangeId = gerrit.getChangeId()
         self.runRepo(["switch", "topic_2"])
         self.createCommit(sId="2")
+        return iChangeNumber, sChangeId
 
-        self.runRepo(["download", os.path.basename(self.lProjectFolders[0]), "%d/1" % iChangeNumber])
+    def repoDownloadTestAssertResult(self, iPatch):
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert os.path.isfile("test_2.txt")
+                if iIdx == 0:
+                    assert os.path.isfile("test_1.txt")
+                    if iPatch == 1:
+                        assert git.getGitMessages() == ["Test commit (2)", "Test commit (1)", INITIAL_COMMIT_MSG]
+                    elif iPatch == 2:
+                        assert git.getGitMessages() == ["Test commit (2)", "Amended test commit (1)",
+                                                        INITIAL_COMMIT_MSG]
+                    else:
+                        pytest.fail("iPatch parameter must be 1 or 2, received %d" % iPatch)
+                else:
+                    assert not os.path.isfile("test_1.txt")
+                    assert git.getGitMessages() == ["Test commit (2)", INITIAL_COMMIT_MSG]
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-            if iIdx == 0:
-                assert os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-                assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", "Test commit (1)",
-                                                               INITIAL_COMMIT_MSG]
-            else:
-                assert not os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-                assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", INITIAL_COMMIT_MSG]
+    def test_repoDownload_rebase_project_changeNumber_patchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_project_changeId_patchNumber(self):
+        _, sChangeId = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", next(iter(self.dProjectFolders.values())), "%s/1" % sChangeId])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_wrongProject(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        oProcess = self.runRepo(["download", "foobar", "%d/1" % iChangeNumber], check=False)
+        assert oProcess.returncode != 0
+
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert os.path.isfile("test_2.txt")
+                assert not os.path.isfile("test_1.txt")
+                assert git.getGitMessages() == ["Test commit (2)", INITIAL_COMMIT_MSG]
+
+    def test_repoDownload_rebase_noProject_changeNumber_patchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", "%d/1" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=1)
+
+    def test_repoDownload_rebase_noProject_changeNumber_noPatchNumber(self):
+        iChangeNumber, _ = self.repoDownloadTestSetup()
+
+        self.runRepo(["download", "%d" % iChangeNumber])
+
+        self.repoDownloadTestAssertResult(iPatch=2)
 
     def test_repoDownload_detach(self):
-        self.runRepo(["start", "topic_2"])
-        self.runRepo(["start", "topic_1"])
-        self.createCommit(sId="1")
-        iChangeNumber = self.push()[0]
-        self.runRepo(["switch", "topic_2"])
-        self.createCommit(sId="2")
+        iChangeNumber, _ = self.repoDownloadTestSetup()
 
-        self.runRepo(["download", "-d", os.path.basename(self.lProjectFolders[0]), "%d/1" % iChangeNumber])
+        self.runRepo(["download", "-d", next(iter(self.dProjectFolders.values())), "%d/1" % iChangeNumber])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
-            if iIdx == 0:
-                assert self.getCurrentBranch(sProjectFolder) == ""
-                assert os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-                assert not os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-                assert self.getGitMessages(sProjectFolder) == ["Test commit (1)", INITIAL_COMMIT_MSG]
-            else:
-                assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-                assert not os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-                assert os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-                assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", INITIAL_COMMIT_MSG]
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                if iIdx == 0:
+                    assert git.getCurrentBranch() == ""
+                    assert os.path.isfile("test_1.txt")
+                    assert not os.path.isfile("test_2.txt")
+                    assert git.getGitMessages() == ["Test commit (1)", INITIAL_COMMIT_MSG]
+                else:
+                    assert git.getCurrentBranch() == "topic_2"
+                    assert not os.path.isfile("test_1.txt")
+                    assert os.path.isfile("test_2.txt")
+                    assert git.getGitMessages() == ["Test commit (2)", INITIAL_COMMIT_MSG]
 
     def test_repoRebase_simple(self):
         self.runRepo(["start", "topic_2"])
@@ -334,12 +436,12 @@ class TestRepo:
 
         self.runRepo(["rebase", "topic_1"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_1.txt"))
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-            assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", "Test commit (1)",
-                                                           INITIAL_COMMIT_MSG]
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                assert os.path.isfile("test_1.txt")
+                assert os.path.isfile("test_2.txt")
+                assert git.getGitMessages() == ["Test commit (2)", "Test commit (1)", INITIAL_COMMIT_MSG]
 
     def test_repoRebase_complex(self):
         self.runRepo(["start", "topic_1"])
@@ -352,35 +454,36 @@ class TestRepo:
 
         self.runRepo(["rebase", "topic_1"])
 
-        for iIdx, sProjectFolder in enumerate(self.lProjectFolders):
-            assert self.getCurrentBranch(sProjectFolder) == "topic_2"
-            sFilePath = os.path.join(sProjectFolder, "test_1.txt")
-            assert os.path.isfile(sFilePath)
-            with open(sFilePath, "r") as oFile:
-                assert oFile.read() == "This is an amended test (1)."
-            assert os.path.isfile(os.path.join(sProjectFolder, "test_2.txt"))
-            assert self.getGitMessages(sProjectFolder) == ["Test commit (2)", "Amended test commit (1)",
-                                                           INITIAL_COMMIT_MSG]
+        for iIdx, sProjectFolder in enumerate(self.dProjectFolders):
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "topic_2"
+                sFileName = "test_1.txt"
+                assert os.path.isfile(sFileName)
+                with open(sFileName, "r") as oFile:
+                    assert oFile.read() == "This is an amended test (1)."
+                assert os.path.isfile("test_2.txt")
+                assert git.getGitMessages() == ["Test commit (2)", "Amended test commit (1)", INITIAL_COMMIT_MSG]
 
     def test_repoRename(self):
         self.runRepo(["start", "topic"])
 
         self.runRepo(["rename", "renamed_topic"])
 
-        for sProjectFolder in self.lProjectFolders:
-            assert self.getCurrentBranch(sProjectFolder) == "renamed_topic"
-            assert self.getAllBranches(sProjectFolder) == ["renamed_topic"]
+        for sProjectFolder in self.dProjectFolders:
+            with changeWorkingDir(sProjectFolder):
+                assert git.getCurrentBranch() == "renamed_topic"
+                assert git.getAllBranches() == ["renamed_topic"]
 
     def test_repoStash(self):
         self.runRepo(["start", "topic_1"])
         self.createCommit(sId="1")
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "w") as oFile:
                 oFile.write("Modified!")
 
         self.runRepo(["stash"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "This is a test (1)."
 
@@ -389,7 +492,7 @@ class TestRepo:
 
         self.runRepo(["pop"])
 
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             with open(os.path.join(sProjectFolder, "test_1.txt"), "r") as oFile:
                 assert oFile.read() == "Modified!"
 
@@ -398,7 +501,7 @@ class TestRepo:
 
         lOutputLines = list(filter(bool, sOutput.splitlines()))
         lExpectedOutputLines = []
-        for sProjectFolder in self.lProjectFolders:
+        for sProjectFolder in self.dProjectFolders:
             lExpectedOutputLines += ["### %s ###" % os.path.basename(sProjectFolder),
                                      "Retrieving stashed content", "WARN: No content to retrieve", "Done"]
         assert lOutputLines[:len(lExpectedOutputLines)] == lExpectedOutputLines

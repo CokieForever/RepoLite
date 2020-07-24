@@ -27,6 +27,12 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
+import ctypes
+import os
+import signal
+import threading
+from contextlib import contextmanager
+
 
 class FatalError(ValueError):
     pass
@@ -34,3 +40,57 @@ class FatalError(ValueError):
 
 def strOrDefault(sString, sDefault):
     return sString if sString else sDefault
+
+
+def hideFile(sFile):
+    if os.name == "nt":
+        INVALID_FILE_ATTRIBUTES = -1
+        FILE_ATTRIBUTE_HIDDEN = 2
+        oKernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        iAttributes = oKernel32.GetFileAttributesW(sFile)
+        if iAttributes == INVALID_FILE_ATTRIBUTES:
+            raise ctypes.WinError(ctypes.get_last_error())
+        iAttributes |= FILE_ATTRIBUTE_HIDDEN
+        if not oKernel32.SetFileAttributesW(sFile, iAttributes):
+            raise FatalError(ctypes.get_last_error())
+
+
+@contextmanager
+def changeWorkingDir(sNewWorkingDir):
+    sOldWorkingDir = os.path.abspath(os.getcwd())
+    os.chdir(os.path.abspath(sNewWorkingDir))
+    try:
+        yield sNewWorkingDir
+    finally:
+        os.chdir(sOldWorkingDir)
+
+
+# See https://stackoverflow.com/a/35792192
+def kill(iPid, iSignum):
+    if os.name == "nt":
+        dSigMap = {
+            signal.SIGINT: signal.CTRL_C_EVENT,
+            signal.SIGBREAK: signal.CTRL_BREAK_EVENT
+        }
+        if iSignum in dSigMap:
+            iPid = 0
+
+        oPrevHandler = signal.getsignal(iSignum)
+        if iSignum in dSigMap and iPid == 0:
+            event = threading.Event()
+
+            # noinspection PyUnusedLocal
+            def handler(iSigNum, oFrame):
+                event.set()
+
+            signal.signal(iSignum, handler)
+            try:
+                os.kill(iPid, dSigMap[iSignum])
+                while not event.is_set():
+                    pass
+            finally:
+                signal.signal(iSignum, oPrevHandler)
+        else:
+            os.kill(iPid, dSigMap.get(iSignum, iSignum))
+    else:
+        os.kill(iPid, iSignum)

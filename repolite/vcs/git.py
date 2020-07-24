@@ -27,7 +27,6 @@ __author__ = "Quoc-Nam Dessoulles"
 __email__ = "cokie.forever@gmail.com"
 __license__ = "MIT"
 
-import copy
 import os
 import subprocess
 
@@ -35,13 +34,39 @@ from repolite.util.misc import FatalError
 
 
 def getFirstRemote():
-    return subprocess.run(["git", "remote"], stdout=subprocess.PIPE, encoding="utf-8",
-                          check=True).stdout.strip().splitlines()[0]
+    return subprocess.run(["git", "remote"], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip().splitlines()[0]
 
 
 def getCurrentBranch():
-    return subprocess.run(["git", "branch", "--show-current"],
-                          stdout=subprocess.PIPE, encoding="utf-8", check=True).stdout.strip()
+    return subprocess.run(["git", "branch", "--show-current"], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip()
+
+
+def getLastCommitMsg():
+    return subprocess.run(["git", "log", "-1", "--format=full"], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip()
+
+
+def getAllBranches():
+    return [s[2:] for s in subprocess.run(["git", "branch"], capture_output=True,
+                                          encoding="utf-8", check=True).stdout.splitlines()]
+
+
+def getGitMessages():
+    return subprocess.run(["git", "log", "--format=format:%s"], capture_output=True,
+                          encoding="utf-8", check=True).stdout.splitlines()
+
+
+def getRemoteUrl():
+    sRemote = getFirstRemote()
+    return subprocess.run(["git", "config", "--get", "remote.%s.url" % sRemote], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip()
+
+
+def getLastCommit():
+    return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                          encoding="utf-8", check=True).stdout.strip()
 
 
 def cherryPick(sCommitId, xOnAbort=None):
@@ -64,7 +89,7 @@ def cherryPick(sCommitId, xOnAbort=None):
         onError()
         while True:
             try:
-                dEnv = copy.deepcopy(os.environ)
+                dEnv = os.environ.copy()
                 dEnv["GIT_EDITOR"] = "true"
                 subprocess.run(["git", "cherry-pick", "--continue"], check=True, env=dEnv)
                 break
