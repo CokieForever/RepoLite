@@ -19,9 +19,11 @@ and a few new ones are introduced such as `repo switch` or `repo push`.
 ## Installation
 
 Go to the root folder and run:
+
 ```commandline
 pip install .
 ```
+
 This will install the tool and put it in your PATH.
 
 ## Usage
@@ -37,6 +39,50 @@ ssh://user@host.com:29418/tools/Project_B
 ```
 
 Then within that folder run `repo sync` to clone all repositories.
+
+By default, the last part of each URL path will be used as folder name, but you can override this behavior by adding
+a name of your choice:
+
+```text
+ssh://user@host.com:29418/Project_A myProject
+ssh://user@host.com:29418/tools/Project_B myOtherProject
+```
+
+### Credentials
+
+For most operations the tool will simply use Git, so you don't need to do any special setup. If Git works, the tool
+will work as well.
+
+For some operations however, the tool will make use of the
+[Gerrit REST API](https://gerrit-review.googlesource.com/Documentation/rest-api.html). In this case, it will need your
+Gerrit credentials (username / password). You will have to save them in a file named `.repolite` in your home folder.
+The file must look like this:
+
+```text
+[<profile name>]
+target = <location on the repository on your local machine>
+url = <Gerrit URL>
+username = <Gerrit username>
+password = <Gerrit password>
+```
+
+You can add as many profiles as needed, the profile names can be freely chosen. You can also add a `DEFAULT` profile
+which will contain the values to use for properties unspecified in other profiles. For example:
+
+```text
+[DEFAULT]
+username = admin
+password = admin
+url = https://gerrit.foobar.com
+
+[repo1]
+target = /home/user/repo1
+
+[repo2]
+target = /home/user/repo2
+username = user
+password = user
+```
 
 ### Typical workflow
 
@@ -206,6 +252,7 @@ case.
 ## Uninstallation
 
 To uninstall the tool, simply run:
+
 ```commandline
 pip uninstall repolite
 ```
